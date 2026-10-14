@@ -10,7 +10,7 @@ the same Firebase project the Production Floor CRM already uses.
 
 ### 1. Firestore
 
-The CRM's Firebase project (`ronch-production`) is reused, so there is no new
+The CRM's Firebase project (`ronch-crm`) is reused, so there is no new
 project to create and no new logins.
 
 1. **Firebase console → Firestore → Rules** — paste the whole of
