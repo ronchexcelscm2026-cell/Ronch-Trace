@@ -305,6 +305,7 @@
       <select id="fVer" class="small" style="width:120px" onchange="repRangeChanged()"></select>
       <select id="fStat" class="small" style="width:150px" onchange="repRangeChanged()"></select>
       <button class="ghost" onclick="repClearFilters()">Clear filters</button>
+      <button class="ghost" style="color:var(--info);border-color:var(--info)" onclick="exportDaily()">Generate Report</button>
     </div>
     <div class="dash-actions">
       <button class="act act-primary" onclick="exportSummary()">
@@ -4741,7 +4742,7 @@ function scopeLabel(units){
   var vs = {};
   units.forEach(function(u){ vs[variantOf(u)] = 1; });
   var list = Object.keys(vs).sort();
-  var per = "   |   Period: " + repPeriodText();
+  var per = "";
   if(list.length === 1){
     var p = list[0];
     var cust = (p.length === 9 && CODE_MASTER[1].map[p.charAt(1)]) || "";
@@ -5275,7 +5276,7 @@ function summarySheet(units, part){
 
 /* When a period comes back empty, say why instead of just "nothing". */
 function explainEmpty(done){
-  var base = "[Ronch Trace v6] No records fall in the selected period (" + repPeriodText() + ").";
+  var base = "[Ronch Trace v7] No records fall in the selected period (" + repPeriodText() + ").";
   if(typeof CLOUD === "undefined" || !CLOUD.on)
     return done(base + " This terminal is running on its own browser storage (not the shared database), "
       + "so it only sees drivers scanned on this same computer.");
@@ -5302,6 +5303,104 @@ function explainEmpty(done){
 }
 function nothingToReport(){
   explainEmpty(function(msg){ notify("wait", "Nothing to report", msg); });
+}
+
+/* ---- date-wise summary: one sheet, one row per day ----------------------
+   Every figure is counted on the day the activity happened, for the drivers
+   that pass the period and the filters. A stage filter keeps only that
+   stage's columns. */
+function dayKey(iso){
+  var d = new Date(iso);
+  if(!isFinite(d.getTime())) return "";
+  var p = function(n){ return (n < 10 ? "0" : "") + n; };
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+function dailySheet(U){
+  var GROUPS = [
+    {k:"MI",      cols:["MI Line Scanned"]},
+    {k:"PCBA",    cols:["PCBA Tested","PCBA Pass","PCBA Fail"]},
+    {k:"HIPOT",   cols:["Hi-pot Tested","Hi-pot Pass","Hi-pot Fail"]},
+    {k:"AGEING",  cols:["Ageing Loaded","Ageing Unloaded","Ageing Pass","Ageing Fail"]},
+    {k:"FINAL",   cols:["Final Tested","Final Pass","Final Fail"]},
+    {k:"PACKING", cols:["Packed (pcs)","Master Boxes"]},
+    {k:"REPAIR",  cols:["Rejections Logged","Repaired","Scrapped"]}
+  ];
+  var pick = repStageKey();
+  var groups = GROUPS.filter(function(g){ return !pick || g.k === pick; });
+  var names = [];
+  groups.forEach(function(g){ g.cols.forEach(function(c){ names.push(c); }); });
+
+  var days = {};
+  var bump = function(iso, col, k){
+    if(!iso || !timeInRange(iso)) return;
+    if(names.indexOf(col) < 0) return;
+    var dk = dayKey(iso); if(!dk) return;
+    if(!days[dk]){ days[dk] = {}; names.forEach(function(n){ days[dk][n] = 0; }); }
+    days[dk][col] += (k || 1);
+  };
+  var boxSeen = {};
+  U.forEach(function(u){
+    if(u.miLine) bump(u.miLine.at, "MI Line Scanned");
+    if(u.stage1){ bump(u.stage1.at, "PCBA Tested");
+      bump(u.stage1.at, u.stage1.verdict === "PASS" ? "PCBA Pass" : "PCBA Fail"); }
+    if(u.stage2){ bump(u.stage2.at, "Hi-pot Tested");
+      bump(u.stage2.at, u.stage2.verdict === "PASS" ? "Hi-pot Pass" : "Hi-pot Fail"); }
+    bump(u.ageingIn, "Ageing Loaded");
+    bump(u.ageingOut, "Ageing Unloaded");
+    if(u.ageingResult) bump(u.ageingResult.at || u.ageingOut,
+      u.ageingResult.verdict === "PASS" ? "Ageing Pass" : "Ageing Fail");
+    if(u.stage4){ bump(u.stage4.at, "Final Tested");
+      bump(u.stage4.at, u.stage4.verdict === "PASS" ? "Final Pass" : "Final Fail"); }
+    if(u.packing){
+      bump(u.packing.at || u.packing.createdAt, "Packed (pcs)");
+      var b = u.packing.boxId;
+      if(b && !boxSeen[b]){
+        boxSeen[b] = 1;
+        var bx = (db.boxes || []).filter(function(x){ return x.id === b; })[0];
+        bump(bx ? bx.createdAt : (u.packing.at || ""), "Master Boxes");
+      }
+    }
+    (u.rejections || []).forEach(function(r){ bump(r.at, "Rejections Logged"); });
+    (u.repairs || []).forEach(function(r){ bump(r.at, r.outcome === "SCRAP" ? "Scrapped" : "Repaired"); });
+  });
+
+  var keys = Object.keys(days).sort();
+  var head = ["Date"].concat(names);
+  var extra = [];                                   // yield columns that make sense with the picked stages
+  if(names.indexOf("PCBA Tested") >= 0)  extra.push(["PCBA Yield %", "PCBA Pass", "PCBA Tested"]);
+  if(names.indexOf("Hi-pot Tested") >= 0) extra.push(["Hi-pot Yield %", "Hi-pot Pass", "Hi-pot Tested"]);
+  if(names.indexOf("Final Tested") >= 0) extra.push(["Final Yield %", "Final Pass", "Final Tested"]);
+  extra.forEach(function(e){ head.push(e[0]); });
+  var width = head.length;
+
+  var eh = headRows("DATE-WISE SUMMARY - ALL ACTIVITY PER DAY", scopeLabel(U), keys.length, width);
+  var rows = eh.rows.concat([[]], [head.map(H)]);
+  var tot = {}; names.forEach(function(n){ tot[n] = 0; });
+  var pct = function(a, b){ return b > 0 ? {v:a / b, s:S_PCT} : {v:"-", s:S_GREY}; };
+  keys.forEach(function(dk){
+    var d = days[dk], row = [{v:dk.split("-").reverse().join("-"), s:S_CELL}];
+    names.forEach(function(n){ tot[n] += d[n]; row.push({v:d[n], s:S_INT}); });
+    extra.forEach(function(e){ row.push(pct(d[e[1]], d[e[2]])); });
+    rows.push(row);
+  });
+  var trow = [{v:"TOTAL", s:S_LABEL}];
+  names.forEach(function(n){ trow.push({v:tot[n], s:S_LABEL}); });
+  extra.forEach(function(e){ trow.push(pct(tot[e[1]], tot[e[2]])); });
+  rows.push(trow);
+  bandRows(rows, 5);
+  var widths = [14]; names.forEach(function(){ widths.push(13); }); extra.forEach(function(){ widths.push(14); });
+  return {rows:rows, cols:widths, merges:eh.merges, freeze:"B6", heights:eh.heights,
+          tab:TAB_SUMMARY, filter:"A5:" + colRef(width - 1) + Math.max(5, rows.length - 1)};
+}
+function exportDaily(){ withPeriodRecords(exportDailyNow); }
+function exportDailyNow(){
+  var U = reportUnits();
+  if(!U.length) return nothingToReport();
+  var sh = dailySheet(U);
+  if(sh.rows.length <= 7)
+    return notify("wait","Nothing to report","No activity fell in the selected period and filters.");
+  saveWorkbook("daily-summary", [["Date-wise Summary", sh]]);
+  notify("ok","Date-wise summary exported", (sh.rows.length - 7) + " day(s), one sheet");
 }
 
 function exportSummary(){ withPeriodRecords(exportSummaryNow); }
