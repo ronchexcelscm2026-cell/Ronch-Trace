@@ -1094,21 +1094,41 @@ function allocateCloud(part, qty, cb){
 function loadRange(fromISO, toISO, cb){
   if(!CLOUD.on || !CLOUD.ready) return cb(0, "Not connected to the shared database.");
   var F = CLOUD.fs;
+  CLOUD.rangeErr = "";
+  var take = function(docs){
+    var n = 0;
+    docs.forEach(function(d){
+      var u = d.data();
+      if(!u.board) u.board = d.id;                 // keyed by board serial; never lose a record
+      var c = u.createdAt || (u.miLine && u.miLine.at) || "";
+      if(c && (c < fromISO || c > toISO)) return;
+      delete u.open; delete u._ts; delete u.part;
+      db.units[u.board] = u;
+      SHADOW.units[u.board] = stable(u);
+      LOADED_FOR_REPORT[u.board] = 1;
+      n++;
+    });
+    try { renderAll(); } catch(e){ CLOUD.rangeErr = "display: " + ((e && e.message) || e); }
+    return n;
+  };
+  /* Plain read of the collection, filtered here. Slower than the indexed query
+     but it cannot be defeated by an index or a field that is missing. */
+  var fallback = function(why, cb2){
+    CLOUD.rangeErr = why || "";
+    F.getDocs(F.query(F.collection(CLOUD.db, COL("units")), F.limit(25000)))
+     .then(function(snap){ cb2(take(snap.docs), null); })
+     .catch(function(e){ cb2(0, (e && e.message) || String(e)); });
+  };
   F.getDocs(F.query(F.collection(CLOUD.db, COL("units")),
       F.where("createdAt", ">=", fromISO),
       F.where("createdAt", "<=", toISO),
       F.orderBy("createdAt", "asc"),
       F.limit(25000)))
    .then(function(snap){
-      snap.docs.forEach(function(d){
-        var u = d.data(); delete u.open; delete u._ts; delete u.part;
-        db.units[u.board] = u;
-        SHADOW.units[u.board] = stable(u);
-        LOADED_FOR_REPORT[u.board] = 1;
-      });
-      renderAll();
-      cb(snap.size, null);
-   }).catch(function(e){ cb(0, (e && e.message) || String(e)); });
+      var n = take(snap.docs);
+      if(n) return cb(n, null);
+      fallback("range query returned nothing", cb);
+   }).catch(function(e){ fallback((e && e.message) || String(e), cb); });
 }
 
 function clearReportLoad(){
@@ -5107,7 +5127,8 @@ function explainEmpty(done){
       if(c && (!lo || c < lo)) lo = c;
       if(c && (!hi || c > hi)) hi = c;
     });
-    done(base + " The shared database does hold " + snap.size + " driver record" + (snap.size === 1 ? "" : "s")
+    done(base + (CLOUD.rangeErr ? " [report fetch: " + CLOUD.rangeErr + "]" : "")
+      + " The shared database does hold " + snap.size + " driver record" + (snap.size === 1 ? "" : "s")
       + (lo ? ", created between " + lo.slice(0,10) + " and " + hi.slice(0,10) : "")
       + ". Press 'All dates' and export again.");
   }).catch(function(e){
