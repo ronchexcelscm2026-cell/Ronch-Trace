@@ -5276,7 +5276,7 @@ function summarySheet(units, part){
 
 /* When a period comes back empty, say why instead of just "nothing". */
 function explainEmpty(done){
-  var base = "[Ronch Trace v7] No records fall in the selected period (" + repPeriodText() + ").";
+  var base = "[Ronch Trace v8] No records fall in the selected period (" + repPeriodText() + ").";
   if(typeof CLOUD === "undefined" || !CLOUD.on)
     return done(base + " This terminal is running on its own browser storage (not the shared database), "
       + "so it only sees drivers scanned on this same computer.");
@@ -5389,7 +5389,7 @@ function dailySheet(U){
   rows.push(trow);
   bandRows(rows, 5);
   var widths = [14]; names.forEach(function(){ widths.push(13); }); extra.forEach(function(){ widths.push(14); });
-  return {rows:rows, cols:widths, merges:eh.merges, freeze:"B6", heights:eh.heights,
+  return {days:keys.length, rows:rows, cols:widths, merges:eh.merges, freeze:"B6", heights:eh.heights,
           tab:TAB_SUMMARY, filter:"A5:" + colRef(width - 1) + Math.max(5, rows.length - 1)};
 }
 function exportDaily(){ withPeriodRecords(exportDailyNow); }
@@ -5397,10 +5397,10 @@ function exportDailyNow(){
   var U = reportUnits();
   if(!U.length) return nothingToReport();
   var sh = dailySheet(U);
-  if(sh.rows.length <= 7)
+  if(!sh.days)
     return notify("wait","Nothing to report","No activity fell in the selected period and filters.");
   saveWorkbook("daily-summary", [["Date-wise Summary", sh]]);
-  notify("ok","Date-wise summary exported", (sh.rows.length - 7) + " day(s), one sheet");
+  notify("ok","Date-wise summary exported", sh.days + " day(s), one sheet");
 }
 
 function exportSummary(){ withPeriodRecords(exportSummaryNow); }
