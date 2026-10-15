@@ -4758,6 +4758,59 @@ function reportSheets(units){
              heights: eh.heights, tab: TAB_SUMMARY,
              filter: "A5:G" + Math.max(5, erows.length)};
 
+  /* ---- unit timeline: every activity on every driver, board by board ----
+     The event log above is in time order across the whole line. This one groups
+     by driver, so one board's whole life reads top to bottom, and it adds the
+     test verdicts and readings that the plain scan history does not carry. */
+  var tl = [];
+  U.forEach(function(u){
+    var seen = {};
+    (u.history || []).forEach(function(h){
+      tl.push([u.board, u.enclosure || "", variantOf(u), h.at, h.station || "", h.operator || "",
+               h.event || "", h.detail || ""]);
+      seen[(h.station || "") + "|" + h.at] = 1;
+    });
+    var res = function(stageName, st, label){
+      if(!st || !st.at) return;
+      var meas = (st.measurements || []).map(function(m){
+        return m.code + "=" + m.value + (m.unit ? " " + m.unit : "");
+      }).join("; ");
+      tl.push([u.board, u.enclosure || "", variantOf(u), st.at, stageName, st.operator || "",
+               label + " " + (st.verdict || ""),
+               [st.failCode ? "fail code " + st.failCode : "",
+                st.outOfLimits ? "out of limits: " + st.outOfLimits : "", meas]
+                 .filter(Boolean).join(" | ")]);
+    };
+    res("PCBA", u.stage1, "PCBA test result");
+    res("HIPOT", u.stage2, "Hi-pot result");
+    res("AGEING_OUT", u.ageingResult, "Ageing result");
+    res("FINAL", u.stage4, "Final test result");
+    (u.rejections || []).forEach(function(r){
+      tl.push([u.board, u.enclosure || "", variantOf(u), r.at, r.stage || r.station || "", r.operator || "",
+               "Rejected", [r.failCode ? "fail code " + r.failCode : "",
+                            r.outOfLimits ? "out of limits: " + r.outOfLimits : ""].filter(Boolean).join(" | ")]);
+    });
+    (u.repairs || []).forEach(function(r){
+      tl.push([u.board, u.enclosure || "", variantOf(u), r.at, "REPAIR", r.operator || "",
+               r.outcome === "SCRAP" ? "Scrapped" : "Repaired",
+               [r.defect, r.action, r.parts, r.note].filter(Boolean).join(" | ")]);
+    });
+  });
+  tl.sort(function(a, b){
+    if(a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
+    return String(a[3]) < String(b[3]) ? -1 : (String(a[3]) > String(b[3]) ? 1 : 0);
+  });
+  var th = headRows("UNIT TIMELINE - EVERY ACTIVITY ON EVERY DRIVER, ALL STAGES", scopeLabel(U), tl.length, 8);
+  var trows = th.rows.concat([[]], [["Board ID","Enclosure ID","Part Code","Timestamp","Station",
+      "Operator","Activity","Detail / Readings"].map(H)]);
+  tl.forEach(function(r){
+    trows.push([L(r[0]), L(r[1]), C(r[2]), D(r[3]), C(r[4]), C(r[5]), L(r[6]), L(r[7])]);
+  });
+  bandRows(trows, 5);
+  var timeline = {rows:trows, cols:[22,22,15,21,13,12,30,60], merges:th.merges, freeze:"B6",
+             heights: th.heights, tab: TAB_SUMMARY,
+             filter: "A5:H" + Math.max(5, trows.length)};
+
   /* ---- rejections and repairs ----
      These two live on the unit outside the stage slots, so sending a repaired
      driver back to PCBA (which clears every stage result) never erases its
@@ -4807,7 +4860,7 @@ function reportSheets(units){
     filter:"A5:Q" + Math.max(5, pr2.length)};
 
   return {allStages:allStages, mi:mi, pcba:pcba, hipot:hipot, ageing:ageing,
-          fin:fin, packing:packing, log:log, rejections:rejections, repairs:repairs};
+          fin:fin, packing:packing, log:log, timeline:timeline, rejections:rejections, repairs:repairs};
 }
 
 /* ---- the summary page, per variant ---- */
@@ -5035,11 +5088,40 @@ function summarySheet(units, part){
           heights:heights, tab:TAB_SUMMARY};
 }
 
+/* When a period comes back empty, say why instead of just "nothing". */
+function explainEmpty(done){
+  var base = "No records fall in the selected period (" + repPeriodText() + ").";
+  if(typeof CLOUD === "undefined" || !CLOUD.on)
+    return done(base + " This terminal is running on its own browser storage (not the shared database), "
+      + "so it only sees drivers scanned on this same computer.");
+  if(!CLOUD.ready) return done(base + " The shared database is not connected yet.");
+  var F = CLOUD.fs;
+  F.getDocs(F.query(F.collection(CLOUD.db, COL("units")), F.limit(500))).then(function(snap){
+    if(!snap.size) return done(base + " The shared database holds no driver records at all"
+      + (CLOUD.lastErr ? " (last error: " + CLOUD.lastErr + ")" : "")
+      + ". The scans from the trial were never saved - check the footer showed 'Shared \u00b7 live' "
+      + "while scanning and that the security rules were published.");
+    var lo = "", hi = "";
+    snap.docs.forEach(function(d){
+      var c = d.data().createdAt || "";
+      if(c && (!lo || c < lo)) lo = c;
+      if(c && (!hi || c > hi)) hi = c;
+    });
+    done(base + " The shared database does hold " + snap.size + " driver record" + (snap.size === 1 ? "" : "s")
+      + (lo ? ", created between " + lo.slice(0,10) + " and " + hi.slice(0,10) : "")
+      + ". Press 'All dates' and export again.");
+  }).catch(function(e){
+    done(base + " Could not check the shared database: " + ((e && e.message) || e));
+  });
+}
+function nothingToReport(){
+  explainEmpty(function(msg){ notify("wait", "Nothing to report", msg); });
+}
+
 function exportSummary(){ withPeriodRecords(exportSummaryNow); }
 function exportSummaryNow(){
   var groups = reportGroups();
-  if(!groups.length) return notify("wait","Nothing to report",
-    "No records fall in the selected period (" + repPeriodText() + ").");
+  if(!groups.length) return nothingToReport();
   var one = groups.length === 1;
   saveWorkbook("summary", groups.map(function(g){
     return [one ? "Summary" : "Summary " + g.variant,
@@ -5052,8 +5134,7 @@ function exportSummaryNow(){
 function exportAllReports(){ withPeriodRecords(exportAllReportsNow); }
 function exportAllReportsNow(){
   var U = reportUnits();
-  if(!U.length) return notify("wait","Nothing to report",
-    "No records fall in the selected period (" + repPeriodText() + ").");
+  if(!U.length) return nothingToReport();
   var groups = reportGroups();
   var r = reportSheets(U);
   var one = groups.length === 1;
@@ -5070,7 +5151,8 @@ function exportAllReportsNow(){
     ["6 Packing",       r.packing],
     ["Rejections",      r.rejections],
     ["Repairs",         r.repairs],
-    ["Event Log",       r.log]
+    ["Event Log",       r.log],
+    ["Unit Timeline",   r.timeline]
   ]);
   saveWorkbook("all-reports", sheets);
   notify("ok","All reports exported",
@@ -5094,7 +5176,8 @@ function exportVariantReportNow(part){
     ["6 Packing",       r.packing],
     ["Rejections",      r.rejections],
     ["Repairs",         r.repairs],
-    ["Event Log",       r.log]
+    ["Event Log",       r.log],
+    ["Unit Timeline",   r.timeline]
   ]);
   notify("ok","Variant report exported", prettyPart(part) + " · " + g.units.length + " units");
 }

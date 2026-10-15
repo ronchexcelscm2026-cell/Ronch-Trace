@@ -183,3 +183,6 @@ Firestore holds the data. For a copy you control, export **All Reports**
 regularly and keep the file. For automatic daily backups, switch the Firebase
 project to the Blaze plan and turn on **Firestore → Backups** — a few rupees a
 month at this data size.
+
+## Reports (v3)
+The full workbook now has an **Unit Timeline** sheet: every scan, test result (with readings), rejection and repair for each driver, grouped board by board across all stages. If a period has no records, the message now says whether the shared database is empty or holds records from other dates.
