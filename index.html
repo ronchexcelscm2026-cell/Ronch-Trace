@@ -296,6 +296,16 @@
       <button class="ghost" onclick="repAll()">All dates</button>
       <span id="repCount" class="muted" style="font-size:13px"></span>
     </div>
+    <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 14px">
+      <span style="color:var(--dim);font-size:13px">Filters</span>
+      <select id="fStage" class="small" style="width:150px" onchange="repRangeChanged()"></select>
+      <select id="fCust" class="small" style="width:140px" onchange="repRangeChanged()"></select>
+      <select id="fWatt" class="small" style="width:120px" onchange="repRangeChanged()"></select>
+      <select id="fCur" class="small" style="width:130px" onchange="repRangeChanged()"></select>
+      <select id="fVer" class="small" style="width:120px" onchange="repRangeChanged()"></select>
+      <select id="fStat" class="small" style="width:150px" onchange="repRangeChanged()"></select>
+      <button class="ghost" onclick="repClearFilters()">Clear filters</button>
+    </div>
     <div class="dash-actions">
       <button class="act act-primary" onclick="exportSummary()">
         <span class="act-t">Summary</span><span class="act-s">Quantities per variant</span></button>
@@ -2030,9 +2040,15 @@ function download(name, text, type){
   var a = document.createElement("a");
   a.href = URL.createObjectURL(b); a.download = name; a.click();
 }
-function allUnits(){
+function allUnitsRaw(){
   return Object.keys(db.units).map(function(k){ return db.units[k]; })
     .sort(function(a,b){ return a.createdAt > b.createdAt ? 1 : -1; });
+}
+function allUnits(){
+  var l = allUnitsRaw();
+  if(!SCOPED) return l;
+  var r = repRange();
+  return l.filter(function(u){ return unitInRange(u, r) && unitMatchesFilters(u); });
 }
 function notify(tone, title, body){
   beep(tone === "ok" ? "ok" : "wait");
@@ -2727,6 +2743,12 @@ function stageTable(key){
                    r.outcome === "SCRAP" ? "SCRAPPED" : "REPAIRED", r.scrapReason || "",
                    r.note || "", r.operator || "", r.attempt || ""]));
       });
+      if(u.status === "REWORK"){
+        var rjs = u.rejections || [], lr = rjs.length ? rjs[rjs.length - 1] : {};
+        prows.push([lr.at || "", u.board, u.enclosure || ""].concat(variantCols(u))
+          .concat([lr.stage || lr.station || "", lr.failCode || "", lr.at || "", "", "", "", "",
+                   "AWAITING REPAIR", "", "", lr.operator || "", ""]));
+      }
     });
     prows.sort(function(a, b){ return a[0] < b[0] ? -1 : 1; });
     prows.forEach(function(r){ t.push(r); });
@@ -2742,6 +2764,7 @@ function logTable(){
   var ev = [];
   allUnits().forEach(function(u){
     (u.history || []).forEach(function(h){
+      if(SCOPED && !actInScope(h.at, h.station)) return;
       ev.push([h.at, h.station || "", h.operator || "", u.board, u.enclosure || "", h.event, h.detail || ""]);
     });
   });
@@ -2750,13 +2773,13 @@ function logTable(){
 }
 
 /* ---- export actions ---- */
-function exportCsv(){ withPeriodRecords(function(){ saveCsv("all-stages", rows()); }); }
-function exportStage(key){ withPeriodRecords(function(){ exportStageNow(key); }); }
+function exportCsv(){ withPeriodRecords(function(){ scoped(function(){ saveCsv("all-stages", rows()); }); }); }
+function exportStage(key){ withPeriodRecords(function(){ scoped(function(){ exportStageNow(key); }); }); }
 function exportStageNow(key){
   saveCsv({MI:"mi-line", PCBA:"pcba", HIPOT:"hipot", AGEING:"ageing", FINAL:"final",
            PACKING:"packing", REJECT:"rejections", REPAIR:"repairs"}[key], stageTable(key));
 }
-function exportLog(){ withPeriodRecords(function(){ saveCsv("event-log", logTable()); }); }
+function exportLog(){ withPeriodRecords(function(){ scoped(function(){ saveCsv("event-log", logTable()); }); }); }
 
 
 
@@ -4190,7 +4213,7 @@ function withPeriodRecords(cb){
    buttons are pressed from. */
 function reportUnits(){
   var r = repRange();
-  return allUnits().filter(function(u){ return unitInRange(u, r); });
+  return allUnitsRaw().filter(function(u){ return unitInRange(u, r) && unitMatchesFilters(u); });
 }
 function reportGroups(){
   var map = {}, order = [];
@@ -4203,10 +4226,12 @@ function reportGroups(){
   return order.map(function(v){ return {variant:v, units:map[v]}; });
 }
 function repPeriodText(){
-  var r = repRange();
-  if(!r) return "All dates";
-  if(r.a && r.b && r.a === r.b) return r.a;
-  return (r.a || "start") + " to " + (r.b || "today");
+  var r = repRange(), t;
+  if(!r) t = "All dates";
+  else if(r.a && r.b && r.a === r.b) t = r.a;
+  else t = (r.a || "start") + " to " + (r.b || "today");
+  var f = repFilterText();
+  return f ? t + " | " + f : t;
 }
 function repRangeChanged(){
   var box = el("repCount");
@@ -4224,6 +4249,105 @@ function repRangeChanged(){
     + ((typeof CLOUD !== "undefined" && CLOUD.on && CLOUD.ready)
         ? "  ·  packed records are fetched when you export" : "");
 }
+/* ---- report filters: stage, customer, wattage, current, version, status ---- */
+var STAGE_FILTERS = [["","Any stage"],["MI","1 MI Line"],["PCBA","2 PCBA testing"],["HIPOT","3 Hi-pot"],
+  ["AGEING","4 Ageing"],["FINAL","5 Final testing"],["PACKING","6 Packing"],["REPAIR","7 Repair bench"]];
+var STATUS_FILTERS = [["","Any status"],["PACKED","Packed"],["WIP","Not packed yet"],["AGEING","In ageing chamber"],
+  ["REWORK","Awaiting repair"],["REPAIRED","Repaired"],["SCRAP","Scrapped"],["FAILED","Ever rejected"]];
+function fillFilter(id, first, list){
+  var e = el(id); if(!e) return;
+  e.innerHTML = '<option value="">' + first + '</option>' + list.map(function(x){
+    return '<option value="' + x[0] + '">' + x[1] + '</option>'; }).join("");
+}
+function codeOpts(i){
+  return Object.keys(CODE_MASTER[i].map).map(function(k){ return [k, CODE_MASTER[i].map[k]]; });
+}
+function initFilters(){
+  var e = el("fStage"); if(!e) return;
+  e.innerHTML = STAGE_FILTERS.map(function(x){ return '<option value="' + x[0] + '">' + x[1] + '</option>'; }).join("");
+  fillFilter("fCust", "Any customer", codeOpts(1));
+  fillFilter("fWatt", "Any wattage", codeOpts(4));
+  fillFilter("fCur",  "Any current", codeOpts(5));
+  fillFilter("fVer",  "Any version", codeOpts(3));
+  el("fStat").innerHTML = STATUS_FILTERS.map(function(x){ return '<option value="' + x[0] + '">' + x[1] + '</option>'; }).join("");
+}
+function fv(id){ return el(id) ? el(id).value : ""; }
+function repClearFilters(){
+  ["fStage","fCust","fWatt","fCur","fVer","fStat"].forEach(function(i){ if(el(i)) el(i).value = ""; });
+  repRangeChanged();
+}
+function repStageKey(){ return fv("fStage"); }
+function repFilterText(){
+  var t = [];
+  var lab = function(id, list){ var v = fv(id); if(!v) return;
+    var o = el(id).options[el(id).selectedIndex]; t.push(o ? o.text : v); };
+  lab("fStage"); lab("fCust"); lab("fWatt"); lab("fCur"); lab("fVer"); lab("fStat");
+  return t.join(", ");
+}
+function stageOfText(x){
+  x = String(x || "");
+  if(/PCBA/i.test(x)) return "PCBA";
+  if(/HI-?POT/i.test(x)) return "HIPOT";
+  if(/AGEING|AGING/i.test(x)) return "AGEING";
+  if(/FINAL/i.test(x)) return "FINAL";
+  if(/PACK/i.test(x)) return "PACKING";
+  if(/REPAIR|REWORK/i.test(x)) return "REPAIR";
+  if(/^MI\b|MI LINE/i.test(x)) return "MI";
+  return "";
+}
+function timeInRange(iso){
+  var r = repRange(); if(!r) return true;
+  var ms = new Date(iso).getTime();
+  return isFinite(ms) && ms >= r.from && ms <= r.to;
+}
+/* An activity row (scan, test, rejection, repair) belongs in the report when it
+   falls in the period and, if a stage is picked, happened at that stage. */
+function actInScope(at, stationOrStage){
+  if(!timeInRange(at)) return false;
+  var k = repStageKey();
+  if(!k) return true;
+  return stageOfText(stationOrStage) === k;
+}
+function unitStageTimes(u, k){
+  var t = [], add = function(x){ if(x) t.push(x); };
+  if(k === "MI") add(u.miLine && u.miLine.at);
+  if(k === "PCBA") add(u.stage1 && u.stage1.at);
+  if(k === "HIPOT") add(u.stage2 && u.stage2.at);
+  if(k === "AGEING"){ add(u.ageingIn); add(u.ageingOut); add(u.ageingResult && u.ageingResult.at); }
+  if(k === "FINAL") add(u.stage4 && u.stage4.at);
+  if(k === "PACKING") add(u.packing && (u.packing.at || u.packing.createdAt));
+  if(k === "REPAIR"){ (u.repairs || []).forEach(function(x){ add(x.at); });
+    if(u.status === "REWORK"){ var rj = u.rejections || []; if(rj.length) add(rj[rj.length-1].at); } }
+  (u.history || []).forEach(function(h){ if(stageOfText(h.station) === k) add(h.at); });
+  return t;
+}
+function unitMatchesFilters(u){
+  var part = variantOf(u), c = function(i){ return part.length === 9 ? part.charAt(i) : ""; };
+  if(fv("fCust") && c(1) !== fv("fCust")) return false;
+  if(fv("fVer")  && c(3) !== fv("fVer"))  return false;
+  if(fv("fWatt") && c(4) !== fv("fWatt")) return false;
+  if(fv("fCur")  && c(5) !== fv("fCur"))  return false;
+  var st = fv("fStat");
+  if(st === "PACKED"   && !u.packing) return false;
+  if(st === "WIP"      && u.packing) return false;
+  if(st === "AGEING"   && !(u.ageingIn && !u.ageingOut)) return false;
+  if(st === "REWORK"   && u.status !== "REWORK") return false;
+  if(st === "REPAIRED" && !((u.repairs || []).some(function(r){ return r.outcome !== "SCRAP"; }))) return false;
+  if(st === "SCRAP"    && u.status !== "SCRAP") return false;
+  if(st === "FAILED"   && !(u.rejections || []).length) return false;
+  var k = repStageKey();
+  if(k){
+    var r = repRange(), ts = unitStageTimes(u, k);
+    if(!ts.length) return false;
+    if(r && !ts.some(function(x){ var ms = new Date(x).getTime(); return isFinite(ms) && ms >= r.from && ms <= r.to; })) return false;
+  }
+  return true;
+}
+/* Run an export with the period and filters applied to every table that reads
+   allUnits(), so the CSV buttons obey them too. */
+var SCOPED = false;
+function scoped(fn){ SCOPED = true; try { return fn(); } finally { SCOPED = false; } }
+
 function repToday(){
   if(!el("repFrom")) return;
   el("repFrom").value = todayISO(); el("repTo").value = todayISO();
@@ -4617,12 +4741,13 @@ function scopeLabel(units){
   var vs = {};
   units.forEach(function(u){ vs[variantOf(u)] = 1; });
   var list = Object.keys(vs).sort();
+  var per = "   |   Period: " + repPeriodText();
   if(list.length === 1){
     var p = list[0];
     var cust = (p.length === 9 && CODE_MASTER[1].map[p.charAt(1)]) || "";
-    return "Variant: " + p + (cust ? "   |   Customer: " + cust : "");
+    return "Variant: " + p + (cust ? "   |   Customer: " + cust : "") + per;
   }
-  return "Variants: " + list.length + "   (" + list.join(", ") + ")";
+  return "Variants: " + list.length + "   (" + list.join(", ") + ")" + per;
 }
 
 function stageSheet(title, cols, widths, units, rowFn){
@@ -4641,8 +4766,9 @@ function reportSheets(units){
   var allStages = stageSheet("ALL STAGES - UNIT TRACEABILITY",
     ["Board ID","Enclosure ID","Part Code","Model","Status","MI Line Completed","MI Operator",
      "PCBA Result","PCBA Tested","Hi-pot Result","Hi-pot Tested","Ageing Loaded","Ageing Unloaded",
-     "Final Result","Final Tested","Master Box","Packed At","Fail Codes","Retests"],
-    [22,22,15,9,11,21,12,15,21,15,21,21,21,15,21,24,21,15,9], U,
+     "Final Result","Final Tested","Master Box","Packed At","Fail Codes","Retests",
+     "Times Rejected","Repairs Done","Last Defect Found","Repair Outcome"],
+    [22,22,15,9,11,21,12,15,21,15,21,21,21,15,21,24,21,15,9,11,11,28,16], U,
     function(u){
       return [L(u.board), L(u.enclosure || ""), C(variantOf(u)), C(modelOf(variantOf(u))),
         C(u.packing ? "PACKED" : (u.status === "PASS" ? "PASSED" : u.status)),
@@ -4654,7 +4780,11 @@ function reportSheets(units){
         L(u.packing ? u.packing.boxId : ""), D(u.packing && u.packing.at),
         C([u.stage1 && u.stage1.failCode, u.stage2 && u.stage2.failCode,
            u.ageingResult && u.ageingResult.failCode, u.stage4 && u.stage4.failCode].filter(Boolean).join(" | ")),
-        C(u.retests || 0)];
+        C(u.retests || 0),
+        C((u.rejections || []).length), C((u.repairs || []).length),
+        C((u.repairs && u.repairs.length) ? (u.repairs[u.repairs.length-1].defect || "") : ""),
+        C(u.status === "REWORK" ? "AWAITING REPAIR"
+          : (u.repairs && u.repairs.length) ? (u.repairs[u.repairs.length-1].outcome === "SCRAP" ? "SCRAPPED" : "REPAIRED") : "")];
     });
 
   var mi = stageSheet("STAGE 1 - MI LINE",
@@ -4766,6 +4896,7 @@ function reportSheets(units){
   var ev = [];
   U.forEach(function(u){
     (u.history || []).forEach(function(h){
+      if(!actInScope(h.at, h.station)) return;
       ev.push([h.at, h.station || "", h.operator || "", u.board, u.enclosure || "", h.event, h.detail || ""]);
     });
   });
@@ -4816,6 +4947,7 @@ function reportSheets(units){
                [r.defect, r.action, r.parts, r.note].filter(Boolean).join(" | ")]);
     });
   });
+  tl = tl.filter(function(r){ return actInScope(r[3], r[4]); });
   tl.sort(function(a, b){
     if(a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
     return String(a[3]) < String(b[3]) ? -1 : (String(a[3]) > String(b[3]) ? 1 : 0);
@@ -4836,7 +4968,8 @@ function reportSheets(units){
      driver back to PCBA (which clears every stage result) never erases its
      failure history. They are the raw material for controlling rejection. */
   var rj = [];
-  U.forEach(function(u){ (u.rejections || []).forEach(function(r){ rj.push([u, r]); }); });
+  U.forEach(function(u){ (u.rejections || []).forEach(function(r){
+    if(actInScope(r.at, r.stage || r.station || "")) rj.push([u, r]); }); });
   rj.sort(function(a, b){ return a[1].at < b[1].at ? -1 : 1; });
   var jh = headRows("REJECTION LOG - EVERY FAILURE RECORDED ON THE LINE", scopeLabel(U), rj.length, 14);
   var jr = jh.rows.concat([[]], [["Timestamp","Board ID","Enclosure ID","Part Code","Model","Stage",
@@ -4855,9 +4988,19 @@ function reportSheets(units){
     filter:"A5:N" + Math.max(5, jr.length)};
 
   var rp = [];
-  U.forEach(function(u){ (u.repairs || []).forEach(function(r){ rp.push([u, r]); }); });
+  U.forEach(function(u){ (u.repairs || []).forEach(function(r){
+    if(timeInRange(r.at) && (!repStageKey() || repStageKey() === "REPAIR" || stageOfText(r.failedStage || r.failedStation || "") === repStageKey()))
+      rp.push([u, r]); }); });
   rp.sort(function(a, b){ return a[1].at < b[1].at ? -1 : 1; });
-  var ph2 = headRows("REPAIR LOG - WHAT WAS FOUND AND WHAT WAS DONE", scopeLabel(U), rp.length, 17);
+  /* Drivers sitting at the repair bench right now have no repair record yet, so
+     they would not appear at all. List them as awaiting repair. */
+  var waiting = [];
+  U.forEach(function(u){
+    if(u.status !== "REWORK") return;
+    var rjs = u.rejections || [], last = rjs.length ? rjs[rjs.length - 1] : {};
+    waiting.push([u, last]);
+  });
+  var ph2 = headRows("STAGE 7 - REPAIR BENCH - WHAT WAS FOUND AND WHAT WAS DONE", scopeLabel(U), rp.length + waiting.length, 17);
   var pr2 = ph2.rows.concat([[]], [["Repaired At","Board ID","Enclosure ID","Part Code","Model",
       "Failed Stage","Fail Code","Failed At","Hours to Repair","Defect Found","Action Taken",
       "Components Replaced","Outcome","Scrap Reason","Note","Operator","Repair No."].map(H)]);
@@ -4874,10 +5017,24 @@ function reportSheets(units){
       (r.outcome === "SCRAP" ? {v:"SCRAPPED", s:S_BAD} : {v:"REPAIRED", s:S_OK}),
       C(r.scrapReason || ""), C(r.note || ""), C(r.operator || ""), C(r.attempt || "")]);
   });
+  waiting.forEach(function(x){
+    var u = x[0], r = x[1], pc = variantOf(u), hrs = "";
+    if(r.at){
+      var d = (Date.now() - new Date(r.at).getTime()) / 3600000;
+      if(isFinite(d)) hrs = Number(d.toFixed(2));
+    }
+    pr2.push([C(""), L(u.board), L(u.enclosure || r.enclosure || ""), C(pc), C(modelOf(pc)),
+      C(r.stage || r.station || ""), C(r.failCode || ""), D(r.at || ""), C(hrs),
+      C(""), C(""), C(""), {v:"AWAITING REPAIR", s:S_BAD}, C(""), C(""), C(r.operator || ""), C("")]);
+  });
   bandRows(pr2, 5);
   var repairs = {rows:pr2, cols:[21,22,22,15,9,20,20,21,14,24,22,26,12,24,30,12,11],
     merges:ph2.merges, freeze:"B6", heights:ph2.heights, tab:TAB_STAGE,
     filter:"A5:Q" + Math.max(5, pr2.length)};
+  var repSummary = {};
+  repSummary.repaired = rp.filter(function(x){ return x[1].outcome !== "SCRAP"; }).length;
+  repSummary.scrapped = rp.length - repSummary.repaired;
+  repSummary.waiting = waiting.length;
 
   return {allStages:allStages, mi:mi, pcba:pcba, hipot:hipot, ageing:ageing,
           fin:fin, packing:packing, log:log, timeline:timeline, rejections:rejections, repairs:repairs};
@@ -4976,6 +5133,14 @@ function summarySheet(units, part){
   var rPk = R(); heights[rPk] = 19.5;
   rows.push([SN("6 - Packing"), NUM(packed), DASH(), DASH(), DASH(),
              NOTE(boxCount + " master boxes · " + ready + " ready to pack")]);
+  var rRb = R();
+  var rbFixed = 0, rbScrap = 0;
+  units.forEach(function(u){ (u.repairs || []).forEach(function(x){
+    if(!timeInRange(x.at)) return;
+    if(x.outcome === "SCRAP") rbScrap++; else rbFixed++; }); });
+  rows.push([SN("7 - Repair bench"), NUM(rbFixed + rbScrap + rework), NUM(rbFixed), NUM(rbScrap), DASH(),
+             NOTE(rework + " awaiting repair now  |  pass = repaired, fail = scrapped")]);
+  heights[rRb] = 19.5;
   bandRows(rows, rStage0);
   [rMI, rP, rH, rAL, rAU, rF].forEach(function(r){ heights[r] = 19.5; });
   var rGap2 = R(); heights[rGap2] = 7.5;
@@ -5110,7 +5275,7 @@ function summarySheet(units, part){
 
 /* When a period comes back empty, say why instead of just "nothing". */
 function explainEmpty(done){
-  var base = "[Ronch Trace v5] No records fall in the selected period (" + repPeriodText() + ").";
+  var base = "[Ronch Trace v6] No records fall in the selected period (" + repPeriodText() + ").";
   if(typeof CLOUD === "undefined" || !CLOUD.on)
     return done(base + " This terminal is running on its own browser storage (not the shared database), "
       + "so it only sees drivers scanned on this same computer.");
@@ -5152,6 +5317,30 @@ function exportSummaryNow(){
     groups.length + " variant" + (groups.length === 1 ? "" : "s") + ", one sheet each");
 }
 
+/* The detail sheets, narrowed to one stage when a stage filter is set. */
+function detailSheets(r){
+  var all = [
+    ["All Stages",      r.allStages, ""],
+    ["1 MI Line",       r.mi,        "MI"],
+    ["2 PCBA",          r.pcba,      "PCBA"],
+    ["3 Hi-pot",        r.hipot,     "HIPOT"],
+    ["4 Ageing",        r.ageing,    "AGEING"],
+    ["5 Final Testing", r.fin,       "FINAL"],
+    ["6 Packing",       r.packing,   "PACKING"],
+    ["7 Repair Bench",  r.repairs,   "REPAIR"],
+    ["Rejections",      r.rejections,"*REJ"],
+    ["Event Log",       r.log,       ""],
+    ["Unit Timeline",   r.timeline,  ""]
+  ];
+  var k = repStageKey();
+  return all.filter(function(x){
+    if(!k) return true;
+    if(x[2] === "") return true;
+    if(x[2] === "*REJ") return k !== "MI" && k !== "PACKING";
+    return x[2] === k;
+  }).map(function(x){ return [x[0], x[1]]; });
+}
+
 function exportAllReports(){ withPeriodRecords(exportAllReportsNow); }
 function exportAllReportsNow(){
   var U = reportUnits();
@@ -5162,19 +5351,7 @@ function exportAllReportsNow(){
   var sheets = groups.map(function(g){
     return [one ? "Summary" : "Summary " + g.variant,
             summarySheet(g.units, g.variant)];
-  }).concat([
-    ["All Stages",      r.allStages],
-    ["1 MI Line",       r.mi],
-    ["2 PCBA",          r.pcba],
-    ["3 Hi-pot",        r.hipot],
-    ["4 Ageing",        r.ageing],
-    ["5 Final Testing", r.fin],
-    ["6 Packing",       r.packing],
-    ["Rejections",      r.rejections],
-    ["Repairs",         r.repairs],
-    ["Event Log",       r.log],
-    ["Unit Timeline",   r.timeline]
-  ]);
+  }).concat(detailSheets(r));
   saveWorkbook("all-reports", sheets);
   notify("ok","All reports exported",
     U.length + " unit" + (U.length === 1 ? "" : "s") + " · " + sheets.length + " sheets");
@@ -5186,20 +5363,8 @@ function exportVariantReportNow(part){
   var g = reportGroups().filter(function(x){ return x.variant === part; })[0];
   if(!g) return notify("wait","Variant not found", part);
   var r = reportSheets(g.units);
-  saveWorkbook("report-" + part, [
-    ["Summary",         summarySheet(g.units, g.variant)],
-    ["All Stages",      r.allStages],
-    ["1 MI Line",       r.mi],
-    ["2 PCBA",          r.pcba],
-    ["3 Hi-pot",        r.hipot],
-    ["4 Ageing",        r.ageing],
-    ["5 Final Testing", r.fin],
-    ["6 Packing",       r.packing],
-    ["Rejections",      r.rejections],
-    ["Repairs",         r.repairs],
-    ["Event Log",       r.log],
-    ["Unit Timeline",   r.timeline]
-  ]);
+  saveWorkbook("report-" + part,
+    [["Summary", summarySheet(g.units, g.variant)]].concat(detailSheets(r)));
   notify("ok","Variant report exported", prettyPart(part) + " · " + g.units.length + " units");
 }
 
@@ -5631,6 +5796,8 @@ function renderDashboard(){
     + " · " + (v ? v + " variant" + (v === 1 ? "" : "s") + " with limits" : "no limits set yet");
 }
 renderDashboard();
+initFilters();
+repRangeChanged();
 
 el("opInput").addEventListener("paste", function(e){
   e.preventDefault();
