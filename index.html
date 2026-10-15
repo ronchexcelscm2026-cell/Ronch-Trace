@@ -1115,7 +1115,7 @@ function loadRange(fromISO, toISO, cb){
      but it cannot be defeated by an index or a field that is missing. */
   var fallback = function(why, cb2){
     CLOUD.rangeErr = why || "";
-    F.getDocs(F.query(F.collection(CLOUD.db, COL("units")), F.limit(25000)))
+    F.getDocs(F.query(F.collection(CLOUD.db, COL("units")), F.limit(10000)))
      .then(function(snap){ cb2(take(snap.docs), null); })
      .catch(function(e){ cb2(0, (e && e.message) || String(e)); });
   };
@@ -1123,7 +1123,7 @@ function loadRange(fromISO, toISO, cb){
       F.where("createdAt", ">=", fromISO),
       F.where("createdAt", "<=", toISO),
       F.orderBy("createdAt", "asc"),
-      F.limit(25000)))
+      F.limit(10000)))
    .then(function(snap){
       var n = take(snap.docs);
       if(n) return cb(n, null);
@@ -5110,7 +5110,7 @@ function summarySheet(units, part){
 
 /* When a period comes back empty, say why instead of just "nothing". */
 function explainEmpty(done){
-  var base = "[Ronch Trace v4] No records fall in the selected period (" + repPeriodText() + ").";
+  var base = "[Ronch Trace v5] No records fall in the selected period (" + repPeriodText() + ").";
   if(typeof CLOUD === "undefined" || !CLOUD.on)
     return done(base + " This terminal is running on its own browser storage (not the shared database), "
       + "so it only sees drivers scanned on this same computer.");
