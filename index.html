@@ -5050,6 +5050,16 @@ function summarySheet(units, part){
   var p2 = v("stage2","PASS"), f2 = v("stage2","FAIL");
   var p3 = v("ageingResult","PASS"), f3 = v("ageingResult","FAIL");
   var p4 = v("stage4","PASS"), f4 = v("stage4","FAIL");
+  /* A failed driver's stage result is wiped when it goes to the repair bench and
+     comes back to PCBA, so counting only the results a driver holds NOW hides
+     every failure that has since been repaired. Each failure is logged as a
+     rejection, so the fail count is taken from those. */
+  var rejBy = {PCBA:0, HIPOT:0, AGEING:0, FINAL:0};
+  units.forEach(function(u){ (u.rejections || []).forEach(function(r){
+    var k = stageOfText(r.station) || stageOfText(r.stage);
+    if(rejBy[k] !== undefined) rejBy[k]++; }); });
+  f1 = Math.max(f1, rejBy.PCBA);  f2 = Math.max(f2, rejBy.HIPOT);
+  f3 = Math.max(f3, rejBy.AGEING); f4 = Math.max(f4, rejBy.FINAL);
   var loaded = n(function(u){ return u.ageingIn; });
   var stillIn = n(function(u){ return u.ageingIn && !u.ageingOut; });
   var packed = n(function(u){ return u.packing; });
@@ -5111,7 +5121,7 @@ function summarySheet(units, part){
   merges.push("A" + rTB + ":F" + rTB);
   heights[R()] = 30;
   rows.push([{v:"Stage", s:S_HEADL}, H("Quantity"), H("Pass"), H("Fail"),
-             H("First Pass Yield %"), {v:"Notes", s:S_HEADL}]);
+             H("Pass Yield %"), {v:"Notes", s:S_HEADL}]);
   var rStage0 = rows.length;
 
   var SN = function(t){ return {v:t, s:S_VARNAME}; };
@@ -5121,16 +5131,16 @@ function summarySheet(units, part){
   var rMI = R();
   rows.push([SN("1 - MI Line"), NUM(miQty), DASH(), DASH(), DASH(), NOTE("Boards scanned into the system")]);
   var rP = R();
-  rows.push([SN("2 - PCBA testing"), NUM(p1+f1), NUM(p1), NUM(f1), pctF(rP, p1, p1+f1), NOTE("")]);
+  rows.push([SN("2 - PCBA testing"), NUM(p1+f1), NUM(p1), NUM(f1), pctF(rP, p1, p1+f1), NOTE(f1 ? f1 + " failed test(s) sent to repair; quantity counts every test" : "")]);
   var rH = R();
   rows.push([SN("3 - Hi-pot and ground"), NUM(p2+f2), NUM(p2), NUM(f2), pctF(rH, p2, p2+f2),
-             NOTE(n(function(u){ return u.enclosure; }) + " paired to an enclosure")]);
+             NOTE(n(function(u){ return u.enclosure; }) + " paired to an enclosure" + (f2 ? "  |  " + f2 + " failed" : ""))]);
   var rAL = R();
   rows.push([SN("4a - Ageing load"), NUM(loaded), DASH(), DASH(), DASH(), NOTE(stillIn + " still in the chamber")]);
   var rAU = R();
-  rows.push([SN("4b - Ageing unload"), NUM(p3+f3), NUM(p3), NUM(f3), pctF(rAU, p3, p3+f3), NOTE("")]);
+  rows.push([SN("4b - Ageing unload"), NUM(p3+f3), NUM(p3), NUM(f3), pctF(rAU, p3, p3+f3), NOTE(f3 ? f3 + " failed after ageing" : "")]);
   var rF = R();
-  rows.push([SN("5 - Final testing"), NUM(p4+f4), NUM(p4), NUM(f4), pctF(rF, p4, p4+f4), NOTE("")]);
+  rows.push([SN("5 - Final testing"), NUM(p4+f4), NUM(p4), NUM(f4), pctF(rF, p4, p4+f4), NOTE(f4 ? f4 + " failed final test" : "")]);
   var rPk = R(); heights[rPk] = 19.5;
   rows.push([SN("6 - Packing"), NUM(packed), DASH(), DASH(), DASH(),
              NOTE(boxCount + " master boxes · " + ready + " ready to pack")]);
@@ -5276,7 +5286,7 @@ function summarySheet(units, part){
 
 /* When a period comes back empty, say why instead of just "nothing". */
 function explainEmpty(done){
-  var base = "[Ronch Trace v8] No records fall in the selected period (" + repPeriodText() + ").";
+  var base = "[Ronch Trace v9] No records fall in the selected period (" + repPeriodText() + ").";
   if(typeof CLOUD === "undefined" || !CLOUD.on)
     return done(base + " This terminal is running on its own browser storage (not the shared database), "
       + "so it only sees drivers scanned on this same computer.");
@@ -5341,16 +5351,14 @@ function dailySheet(U){
   var boxSeen = {};
   U.forEach(function(u){
     if(u.miLine) bump(u.miLine.at, "MI Line Scanned");
-    if(u.stage1){ bump(u.stage1.at, "PCBA Tested");
-      bump(u.stage1.at, u.stage1.verdict === "PASS" ? "PCBA Pass" : "PCBA Fail"); }
-    if(u.stage2){ bump(u.stage2.at, "Hi-pot Tested");
-      bump(u.stage2.at, u.stage2.verdict === "PASS" ? "Hi-pot Pass" : "Hi-pot Fail"); }
+    /* Passes come from the result the driver holds; every failure is a logged
+       rejection (the result itself is wiped when the driver is repaired). */
+    if(u.stage1 && u.stage1.verdict === "PASS"){ bump(u.stage1.at, "PCBA Tested"); bump(u.stage1.at, "PCBA Pass"); }
+    if(u.stage2 && u.stage2.verdict === "PASS"){ bump(u.stage2.at, "Hi-pot Tested"); bump(u.stage2.at, "Hi-pot Pass"); }
     bump(u.ageingIn, "Ageing Loaded");
     bump(u.ageingOut, "Ageing Unloaded");
-    if(u.ageingResult) bump(u.ageingResult.at || u.ageingOut,
-      u.ageingResult.verdict === "PASS" ? "Ageing Pass" : "Ageing Fail");
-    if(u.stage4){ bump(u.stage4.at, "Final Tested");
-      bump(u.stage4.at, u.stage4.verdict === "PASS" ? "Final Pass" : "Final Fail"); }
+    if(u.ageingResult && u.ageingResult.verdict === "PASS") bump(u.ageingResult.at || u.ageingOut, "Ageing Pass");
+    if(u.stage4 && u.stage4.verdict === "PASS"){ bump(u.stage4.at, "Final Tested"); bump(u.stage4.at, "Final Pass"); }
     if(u.packing){
       bump(u.packing.at || u.packing.createdAt, "Packed (pcs)");
       var b = u.packing.boxId;
@@ -5360,7 +5368,14 @@ function dailySheet(U){
         bump(bx ? bx.createdAt : (u.packing.at || ""), "Master Boxes");
       }
     }
-    (u.rejections || []).forEach(function(r){ bump(r.at, "Rejections Logged"); });
+    (u.rejections || []).forEach(function(r){
+      bump(r.at, "Rejections Logged");
+      var k = stageOfText(r.station) || stageOfText(r.stage);
+      var nm = {PCBA:"PCBA", HIPOT:"Hi-pot", AGEING:"Ageing", FINAL:"Final"}[k];
+      if(!nm) return;
+      bump(r.at, nm + " Fail");
+      if(nm !== "Ageing") bump(r.at, nm + " Tested");
+    });
     (u.repairs || []).forEach(function(r){ bump(r.at, r.outcome === "SCRAP" ? "Scrapped" : "Repaired"); });
   });
 
