@@ -5110,7 +5110,7 @@ function summarySheet(units, part){
 
 /* When a period comes back empty, say why instead of just "nothing". */
 function explainEmpty(done){
-  var base = "No records fall in the selected period (" + repPeriodText() + ").";
+  var base = "[Ronch Trace v4] No records fall in the selected period (" + repPeriodText() + ").";
   if(typeof CLOUD === "undefined" || !CLOUD.on)
     return done(base + " This terminal is running on its own browser storage (not the shared database), "
       + "so it only sees drivers scanned on this same computer.");
