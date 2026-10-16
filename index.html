@@ -824,6 +824,10 @@ var SYNC_TIMER = null;
    Each unit also keeps what it added (u.wc, per day), so deleting a unit in
    the admin panel takes exactly its share back off the WO. */
 var CRM_WOS = [], WOSTAT = {}, MI_WO = null, CRM_WO_ERR = "";
+/* Switched OFF for now: Ronch Trace runs on its own, without CRM work orders.
+   To turn the link on later, add  linkCrmWO: true  to APP_SETTINGS in
+   firebase-config.js — nothing else has to change. */
+var LINK_WO = !!(window.APP_SETTINGS && window.APP_SETTINGS.linkCrmWO === true);
 var WO_FIELDS = {s0:"PCBA testing", s1:"Hi-pot and ground", s2:"Ageing", s3:"Final testing", s4:"Packing"};
 function woDocId(no){ return encodeURIComponent(String(no)).replace(/\./g, "%2E"); }
 function woByNo(no){ return CRM_WOS.filter(function(w){ return w.no === no; })[0] || null; }
@@ -845,14 +849,14 @@ function woSend(wo, day, add, extra){
 }
 /* add = {s0p:1} etc. Only units that were given a WO at MI Line count. */
 function bumpWO(u, add, extra){
-  if(!u || !u.wo) return;
+  if(!LINK_WO || !u || !u.wo) return;
   var day = todayISO();
   var wc = u.wc = u.wc || {}, b = wc[day] = wc[day] || {};
   Object.keys(add).forEach(function(k){ b[k] = (b[k] || 0) + add[k]; });
   woSend(u.wo, day, add, extra);
 }
 function unbumpWO(u){
-  if(!u || !u.wo || !u.wc) return;
+  if(!LINK_WO || !u || !u.wo || !u.wc) return;
   Object.keys(u.wc).forEach(function(day){
     var neg = {}, any = false;
     Object.keys(u.wc[day] || {}).forEach(function(k){ if(u.wc[day][k]){ neg[k] = -u.wc[day][k]; any = true; } });
@@ -863,7 +867,7 @@ function unbumpWO(u){
 /* Admin unpair sends a driver back without a test failure. Turn its most
    recent pass into a fail so the CRM sees it leave the line into rework. */
 function unpairWO(u){
-  if(!u || !u.wo || u.status === "REWORK" || u.status === "SCRAP") return;
+  if(!LINK_WO || !u || !u.wo || u.status === "REWORK" || u.status === "SCRAP") return;
   var k = (u.stage4 && u.stage4.verdict === "PASS") ? "s3"
         : (u.ageingResult && u.ageingResult.verdict === "PASS") ? "s2"
         : (u.stage2 && u.stage2.verdict === "PASS") ? "s1"
@@ -885,7 +889,7 @@ function woOptLabel(w){
 }
 function renderWoRow(){
   var row = el("woRow"); if(!row) return;
-  var on = CLOUD.on && station && station.key === "MI";
+  var on = LINK_WO && CLOUD.on && station && station.key === "MI";
   row.classList.toggle("hide", !on);
   if(!on) return;
   var sel = el("woSel");
@@ -1128,7 +1132,7 @@ function startCloud(){
     done("limits");
   }, function(e){ cloudFail("limits", e); });
 
-  F.onSnapshot(F.collection(CLOUD.db, "pf_wos"), function(snap){
+  if(LINK_WO) F.onSnapshot(F.collection(CLOUD.db, "pf_wos"), function(snap){
     CRM_WO_ERR = "";
     CRM_WOS = snap.docs.map(function(d){ return d.data(); })
       .filter(function(w){ return w && w.no && !w.closed; })
@@ -1136,7 +1140,7 @@ function startCloud(){
     renderWoRow();
   }, function(e){ CRM_WOS = []; CRM_WO_ERR = (e && e.message) || String(e); renderWoRow(); });
 
-  F.onSnapshot(F.collection(CLOUD.db, COL("wostats")), function(snap){
+  if(LINK_WO) F.onSnapshot(F.collection(CLOUD.db, COL("wostats")), function(snap){
     WOSTAT = {};
     snap.docs.forEach(function(d){ var v = d.data(); WOSTAT[v.wo || decodeURIComponent(d.id)] = v; });
     renderWoRow();
@@ -1387,7 +1391,7 @@ function hhmm(iso){ return iso ? new Date(iso).toLocaleTimeString([], {hour:"2-d
 /* Stamped at build time. The station PCs keep this page open all day, so the
    app asks the server now and then whether a newer build has been published
    rather than relying on anyone remembering to reload after a deploy. */
-var BUILD_ID = "2026-10-16-1900";
+var BUILD_ID = "2026-10-16-2130";
 var UPDATE_SEEN = false, UPDATE_CHECKED = 0;
 
 function checkForUpdate(){
@@ -1647,7 +1651,7 @@ function scanMI(c){
     c.serial + " was scrapped at the repair bench and cannot be used again. Use a new code.");
   if(u && u.miLine) return reject("Already recorded at MI Line", c.serial + " was scanned at " + hhmm(u.miLine.at) + ". Send it to PCBA testing.");
   var W = null, st = {}, extra = null;
-  if(CLOUD.on){
+  if(LINK_WO && CLOUD.on){
     if(!MI_WO) return reject("Choose the work order first",
       "Select the running Ronch CRM work order above the scan field, then scan the board again.");
     W = woByNo(MI_WO);

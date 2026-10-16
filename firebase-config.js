@@ -1,19 +1,18 @@
-// ===== Ronch Production Floor · Traceability · settings =====
-// Same Firebase project as the CRM, so both apps share one database and one
-// set of logins. The traceability app uses its own tr_* collections and never
-// touches the CRM's pf_* ones.
+// ===== Ronch Trace · settings =====
+// Same Firebase project as Ronch CRM (ronch-crm), so both apps share one
+// database and one set of logins. Trace uses its own tr_* collections and
+// reads the CRM's work orders (pf_wos) to link MI Line scans to a WO.
 window.FIREBASE_CONFIG = {
-  apiKey: "AIzaSyAF3M6t-LOeDMIwYJlW4AeAD9QtXt6AzIA",
-  authDomain: "ronch-production.firebaseapp.com",
-  projectId: "ronch-production",
-  storageBucket: "ronch-production.firebasestorage.app",
-  messagingSenderId: "831587496128",
-  appId: "1:831587496128:web:dd84286729f285b453bd25"
+  apiKey: "AIzaSyBK8qoz7QZlG7kSnjYiZxBGFFlW9B6Nj0M",
+  authDomain: "ronch-crm.firebaseapp.com",
+  projectId: "ronch-crm",
+  storageBucket: "ronch-crm.firebasestorage.app",
+  messagingSenderId: "253604041643",
+  appId: "1:253604041643:web:56d234059c22eb5f5978ee"
 };
 
 window.APP_SETTINGS = {
-  // Station PCs sign in as <name>@<loginDomain>. Create these users in
-  // Firebase → Authentication → Users:
+  // Station PCs sign in as <name>@<loginDomain> — the same users as the CRM:
   //   production@   quality@   admin@
   loginDomain: "ronch-floor.app",
 
