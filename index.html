@@ -175,7 +175,7 @@
     .dash-head{gap:16px}
     #pick{padding:22px 14px 40px}
   }
-  .hide{display:none}
+  .hide{display:none!important}
   .muted{color:var(--faint)}
   .packing-panel{margin-top:22px;border:1px solid var(--line);border-radius:8px;padding:18px;background:var(--panel)}
   .packing-progress{height:10px;background:var(--base);border-radius:999px;overflow:hidden;margin:12px 0}
@@ -605,6 +605,18 @@
     </div>
 
     <div class="counts" id="counts"></div>
+    <div id="woRow" class="hide" style="margin-top:22px;padding:14px 16px;background:var(--panel);
+         border:1px solid var(--info);border-radius:6px">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <label style="color:var(--dim);font-size:15px">Work order (Ronch CRM)
+          <select id="woSel" onchange="setMiWO(this.value)"
+                  style="margin-left:8px;min-width:320px;background:var(--panel2);color:var(--text);
+                         border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit;font-size:15px"></select>
+        </label>
+        <span id="woProg" style="font-size:15px"></span>
+      </div>
+      <div id="woNote" class="muted" style="font-size:12px;margin-top:9px"></div>
+    </div>
     <div id="ageRow" class="hide" style="margin-top:22px;padding:14px 16px;background:var(--panel);
          border:1px solid var(--line);border-radius:6px">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
@@ -800,6 +812,101 @@ var COL = function(n){ return PREFIX + n; };
 var SHADOW = {units:{}, enc:{}, boxes:{}, batches:{}, limits:{}, meta:""};
 var REMOVED = {enc:{}, limits:{}, units:{}, boxes:{}, batches:{}};
 var SYNC_TIMER = null;
+
+/* ===================== RONCH CRM WORK-ORDER LINK =====================
+   The MI Line operator picks the running CRM work order (read from the CRM's
+   pf_wos, never written). Every board scanned there carries that WO number,
+   and every stage result, repair and packing adds to ONE small counter
+   document per WO in tr_wostats — totals plus a per-day breakdown. The CRM
+   reads only those counters, never the units, so the link costs a handful of
+   reads however many drivers are built.
+
+   Each unit also keeps what it added (u.wc, per day), so deleting a unit in
+   the admin panel takes exactly its share back off the WO. */
+var CRM_WOS = [], WOSTAT = {}, MI_WO = null, CRM_WO_ERR = "";
+var WO_FIELDS = {s0:"PCBA testing", s1:"Hi-pot and ground", s2:"Ageing", s3:"Final testing", s4:"Packing"};
+function woDocId(no){ return encodeURIComponent(String(no)).replace(/\./g, "%2E"); }
+function woByNo(no){ return CRM_WOS.filter(function(w){ return w.no === no; })[0] || null; }
+/* The parts of the part code that make the MODEL: product type, control type,
+   version, wattage, output current. Customer, warranty, wire and housing may
+   differ inside one WO, because a WO clubs several customers' orders. */
+function modelKey(part){
+  return part && part.length === 9
+    ? part.charAt(0) + part.charAt(2) + part.charAt(3) + part.charAt(4) + part.charAt(5) : "";
+}
+function woSend(wo, day, add, extra){
+  if(!CLOUD.on || !CLOUD.ready || !wo) return;
+  var F = CLOUD.fs, d = {wo:wo, _ts:Date.now(), at:now()}, dd = {};
+  Object.keys(add).forEach(function(k){ d[k] = F.increment(add[k]); dd[k] = F.increment(add[k]); });
+  d.days = {}; d.days[day] = dd;
+  if(extra) Object.keys(extra).forEach(function(k){ d[k] = extra[k]; });
+  F.setDoc(F.doc(CLOUD.db, COL("wostats"), woDocId(wo)), d, {merge:true})
+    .catch(function(e){ setSync("bad", "WO count not saved: " + ((e && e.message) || e)); });
+}
+/* add = {s0p:1} etc. Only units that were given a WO at MI Line count. */
+function bumpWO(u, add, extra){
+  if(!u || !u.wo) return;
+  var day = todayISO();
+  var wc = u.wc = u.wc || {}, b = wc[day] = wc[day] || {};
+  Object.keys(add).forEach(function(k){ b[k] = (b[k] || 0) + add[k]; });
+  woSend(u.wo, day, add, extra);
+}
+function unbumpWO(u){
+  if(!u || !u.wo || !u.wc) return;
+  Object.keys(u.wc).forEach(function(day){
+    var neg = {}, any = false;
+    Object.keys(u.wc[day] || {}).forEach(function(k){ if(u.wc[day][k]){ neg[k] = -u.wc[day][k]; any = true; } });
+    if(any) woSend(u.wo, day, neg);
+  });
+  u.wc = {};
+}
+/* Admin unpair sends a driver back without a test failure. Turn its most
+   recent pass into a fail so the CRM sees it leave the line into rework. */
+function unpairWO(u){
+  if(!u || !u.wo || u.status === "REWORK" || u.status === "SCRAP") return;
+  var k = (u.stage4 && u.stage4.verdict === "PASS") ? "s3"
+        : (u.ageingResult && u.ageingResult.verdict === "PASS") ? "s2"
+        : (u.stage2 && u.stage2.verdict === "PASS") ? "s1"
+        : (u.stage1 && u.stage1.verdict === "PASS") ? "s0" : null;
+  if(!k) return;
+  var a = {}; a[k + "p"] = -1; a[k + "f"] = 1;
+  bumpWO(u, a);
+}
+function setMiWO(v){
+  MI_WO = v || null;
+  savePC(); renderWoRow();
+  if(MI_WO){ var W = woByNo(MI_WO);
+    banner("idle", "Work order " + MI_WO, (W ? W.product + " · plan " + W.qty : "") + " — scan the board codes"); }
+  resetScanBuffer(); focusScan();
+}
+function woOptLabel(w){
+  var st = WOSTAT[w.no] || {};
+  return w.no + "  ·  " + (w.product || "") + "  ·  MI " + (st.mi || 0) + " of " + (w.qty || 0);
+}
+function renderWoRow(){
+  var row = el("woRow"); if(!row) return;
+  var on = CLOUD.on && station && station.key === "MI";
+  row.classList.toggle("hide", !on);
+  if(!on) return;
+  var sel = el("woSel");
+  if(document.activeElement !== sel){
+    var h = '<option value="">— choose the running work order —</option>';
+    var list = CRM_WOS.slice();
+    if(MI_WO && !woByNo(MI_WO)) h += '<option value="' + repHEsc(MI_WO) + '">' + repHEsc(MI_WO) + '  (closed in CRM)</option>';
+    h += list.map(function(w){ return '<option value="' + repHEsc(w.no) + '">' + repHEsc(woOptLabel(w)) + '</option>'; }).join("");
+    sel.innerHTML = h;
+    sel.value = MI_WO || "";
+  }
+  var W = MI_WO && woByNo(MI_WO), st = (MI_WO && WOSTAT[MI_WO]) || {};
+  el("woProg").innerHTML = W
+    ? '<b>' + (st.mi || 0) + '</b> of ' + (W.qty || 0) + ' scanned at MI Line'
+      + (st.mpart ? '  ·  <span class="muted">' + repHEsc(variantShort(st.mpart).replace(/^[^·]*·\s*/, "")) + '</span>' : "")
+    : "";
+  el("woNote").textContent = CRM_WO_ERR ? ("Could not read the CRM work orders: " + CRM_WO_ERR)
+    : !CRM_WOS.length ? "No open work orders in Ronch CRM. Production creates them there."
+    : MI_WO && !W ? MI_WO + " is closed in Ronch CRM. Choose the running work order."
+    : "Every board scanned here is counted against this work order in Ronch CRM, and so is everything that happens to it later (tests, repairs, packing).";
+}
 
 function cloudConfigured(){
   var c = window.FIREBASE_CONFIG;
@@ -1020,6 +1127,20 @@ function startCloud(){
     });
     done("limits");
   }, function(e){ cloudFail("limits", e); });
+
+  F.onSnapshot(F.collection(CLOUD.db, "pf_wos"), function(snap){
+    CRM_WO_ERR = "";
+    CRM_WOS = snap.docs.map(function(d){ return d.data(); })
+      .filter(function(w){ return w && w.no && !w.closed; })
+      .sort(function(a, b){ return String(b.no).localeCompare(String(a.no), undefined, {numeric:true}); });
+    renderWoRow();
+  }, function(e){ CRM_WOS = []; CRM_WO_ERR = (e && e.message) || String(e); renderWoRow(); });
+
+  F.onSnapshot(F.collection(CLOUD.db, COL("wostats")), function(snap){
+    WOSTAT = {};
+    snap.docs.forEach(function(d){ var v = d.data(); WOSTAT[v.wo || decodeURIComponent(d.id)] = v; });
+    renderWoRow();
+  }, function(){});
 
   F.onSnapshot(F.doc(CLOUD.db, COL("meta"), "settings"), function(d){
     if(d.exists()){
@@ -1266,7 +1387,7 @@ function hhmm(iso){ return iso ? new Date(iso).toLocaleTimeString([], {hour:"2-d
 /* Stamped at build time. The station PCs keep this page open all day, so the
    app asks the server now and then whether a newer build has been published
    rather than relying on anyone remembering to reload after a deploy. */
-var BUILD_ID = "2026-10-14-1745";
+var BUILD_ID = "2026-10-16-1900";
 var UPDATE_SEEN = false, UPDATE_CHECKED = 0;
 
 function checkForUpdate(){
@@ -1355,6 +1476,7 @@ function savePC(){
   try{
     localStorage.setItem(PCKEY, JSON.stringify({
       stationKey: station ? station.key : null,
+      miWO: MI_WO || null,
       analyserByStation: db.settings.analyserByStation || {}
     }));
   }catch(e){}
@@ -1363,6 +1485,7 @@ function loadPC(){
   try{
     var d = JSON.parse(localStorage.getItem(PCKEY) || "{}");
     if(d.analyserByStation) db.settings.analyserByStation = d.analyserByStation;
+    MI_WO = d.miWO || null;
     return d.stationKey || null;
   }catch(e){ return null; }
 }
@@ -1523,11 +1646,35 @@ function scanMI(c){
   if(u && u.status === "SCRAP") return reject("This code was scrapped",
     c.serial + " was scrapped at the repair bench and cannot be used again. Use a new code.");
   if(u && u.miLine) return reject("Already recorded at MI Line", c.serial + " was scanned at " + hhmm(u.miLine.at) + ". Send it to PCBA testing.");
+  var W = null, st = {}, extra = null;
+  if(CLOUD.on){
+    if(!MI_WO) return reject("Choose the work order first",
+      "Select the running Ronch CRM work order above the scan field, then scan the board again.");
+    W = woByNo(MI_WO);
+    if(!W) return reject("Work order not open", MI_WO + " is closed or no longer in Ronch CRM. Choose the running work order.");
+    st = WOSTAT[W.no] || {};
+    var mk = modelKey(c.partCode);
+    var locked = st.mkey && (st.mi || 0) > 0;   // the first board on a WO sets its model
+    if(locked && mk && st.mkey !== mk) return reject("Different model for " + W.no,
+      c.serial + " is " + variantShort(c.partCode) + ", but " + W.no + " (" + W.product + ") is running "
+      + variantShort(st.mpart || "") + ". Check the board, or choose the right work order.");
+    if(!locked && mk) extra = {mkey:mk, mpart:c.partCode, product:W.product || ""};
+  }
   if(!u) u = db.units[c.serial] = blankUnit(c.serial);
   u.miLine = {at:now(), operator:operator};
   u.history.push({at:now(), station:"MI", operator:operator, event:"MI Line completed", detail:c.serial});
+  if(W){
+    u.wo = W.no;
+    u.history.push({at:now(), station:"MI", operator:operator, event:"Work order", detail:W.no});
+    bumpWO(u, {mi:1}, extra);
+  }
   save();
-  accept("MI Line recorded", c.serial + " · send to PCBA testing");
+  if(!W) return accept("MI Line recorded", c.serial + " · send to PCBA testing");
+  var n = (st.mi || 0) + 1;
+  if(W.qty && n > W.qty)
+    return waiting("MI Line recorded — over the WO quantity",
+      c.serial + " · " + W.no + " · " + n + " of " + W.qty + ". Check with the supervisor before continuing.");
+  accept("MI Line recorded", c.serial + " · " + W.no + " · " + n + " of " + (W.qty || "?") + " · send to PCBA testing");
 }
 
 function scanPCBA(c){
@@ -1759,6 +1906,7 @@ function completeMasterBox(){
     if(!u) return;
     u.packing = {boxId:box.id, at:box.createdAt, operator:operator};
     u.status = "PACKED";
+    bumpWO(u, {s4p:1});
     u.history.push({at:now(), station:"PACKING", operator:operator, event:"Packed in master box", detail:box.id});
   });
   db.boxes.push(box);
@@ -1969,6 +2117,8 @@ function recordVerdict(verdict, failCode){
   }
   if(pending.enclosure) u.enclosure = pending.enclosure;
   if(pending.retest) u.retests = (u.retests || 0) + 1;
+  var wk = {PCBA:"s0", HIPOT:"s1", AGEING_OUT:"s2", FINAL:"s3"}[station.key];
+  if(wk){ var wa = {}; wa[wk + (verdict === "PASS" ? "p" : "f")] = 1; bumpWO(u, wa); }
   if(verdict === "FAIL") logRejection(u, entry, station.key, station.name, failCode);
   u.status = verdict === "FAIL" ? "REWORK" : (station.key === "FINAL" ? "PASS" : "in_progress");
   u.history.push({at:now(), station:station.key, operator:operator,
@@ -2016,6 +2166,7 @@ function unpair(board){
   var u = db.units[board]; if(!u || !u.enclosure) return;
   var enc = u.enclosure;
   if(!confirm("Unpair " + board + " from " + enc + "? Ageing and final results will be cleared.")) return;
+  unpairWO(u);
   u.enclosure = null; u.ageingIn = null; u.ageingOut = null; u.stage4 = null; u.status = "REWORK";
   u.history.push({at:now(), station:"ADMIN", operator:operator, event:"Unpaired from enclosure", detail:enc});
   delete db.encIndex[enc];
@@ -2338,6 +2489,7 @@ function ftApply(parsed, fileName){
     entry.outOfLimits = (entry.failing || []).join(" ");
     if(u.stage4) u.retests = (u.retests || 0) + 1;
     u.stage4 = entry;
+    bumpWO(u, r.verdict === "FAIL" ? {s3f:1} : {s3p:1});
     if(r.verdict === "FAIL") logRejection(u, entry, "FINAL", "Final testing", entry.failCode);
     u.status = r.verdict === "FAIL" ? "REWORK" : "PASS";
     u.history.push({at:now(), station:"FINAL", operator:operator,
@@ -2511,6 +2663,7 @@ function repRecord(outcome){
 
   if(outcome === "SCRAP"){
     u.status = "SCRAP";
+    bumpWO(u, {scrap:1});
     u.history.push({at:now(), station:"REPAIR", operator:operator,
       event:"Scrapped · " + rec.scrapReason, detail:rec.defect});
     save(); repClose();
@@ -2525,6 +2678,7 @@ function repRecord(outcome){
   u.stage1 = null; u.stage2 = null; u.ageingIn = null; u.ageingOut = null;
   u.ageingResult = null; u.stage4 = null; u.ftPending = null;
   u.status = "REPAIRED";
+  bumpWO(u, {rwOk:1});
   u.history.push({at:now(), station:"REPAIR", operator:operator,
     event:"Repaired · " + rec.defect,
     detail:rec.action + (rec.parts ? "  ·  " + rec.parts : "") + (rec.note ? "  ·  " + rec.note : "")});
@@ -5599,6 +5753,7 @@ function delRun(){
 
   s.units.forEach(function(k){
     var u = db.units[k];
+    unbumpWO(u);
     if(u && u.enclosure && db.encIndex){
       delete db.encIndex[u.enclosure];
       markRemoved("enc", u.enclosure);
@@ -5624,6 +5779,7 @@ function delRun(){
 }
 
 function render(){
+  renderWoRow();
   if(el("delPanel")) el("delPanel").classList.toggle("hide", !isAdminUser());
   if(el("repFrom") && !el("repFrom").dataset.init){
     el("repFrom").dataset.init = "1";
@@ -5946,7 +6102,7 @@ document.addEventListener("keydown", function(e){
   if(!terminalOpen() && !onSignin) return;
   var target = e.target;
   var activeField = onSignin ? el("opInput") : el("scan");
-  if(target && target !== activeField && (target.tagName === "BUTTON" || target.tagName === "TEXTAREA" ||
+  if(target && target !== activeField && (target.tagName === "BUTTON" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" ||
      (target.tagName === "INPUT" && !target.readOnly))) return;
 
   if(e.ctrlKey || e.altKey || e.metaKey) return;
@@ -6031,7 +6187,7 @@ import {
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, getDoc, getDocs, onSnapshot, query, where, orderBy, limit,
-  writeBatch, runTransaction
+  writeBatch, runTransaction, setDoc, increment
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
 try{
@@ -6045,7 +6201,7 @@ try{
   window.__cloudGo({
     db, authInst,
     fs: { collection, doc, getDoc, getDocs, onSnapshot, query, where, orderBy,
-          limit, writeBatch, runTransaction },
+          limit, writeBatch, runTransaction, setDoc, increment },
     auth: { signInWithEmailAndPassword, signOut, onAuthStateChanged,
             EmailAuthProvider, reauthenticateWithCredential, updatePassword }
   });

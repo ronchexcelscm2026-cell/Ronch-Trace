@@ -2,6 +2,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ONE rules file for the whole ronch-crm project: Ronch CRM (pf_*) + Ronch Trace (tr_*).
+    // The same file ships with both apps. Publishing either copy keeps both apps working.
+
     // Department = the part of the login email before "@",
     // e.g. production@ronch-floor.app -> "production"
     function dept() { return request.auth.token.email.split('@')[0]; }
@@ -11,7 +14,7 @@ service cloud.firestore {
     // Everyone signed in can read everything
     match /{document=**} { allow read: if signedIn(); }
 
-    // ---------- Production Floor CRM (unchanged) ----------
+    // ---------- Ronch CRM (Production Floor) ----------
     match /pf_orders/{id}     { allow write: if by(['sales']); }
     match /pf_clients/{id}    { allow write: if by(['sales']); }
     match /pf_pos/{id}        { allow write: if by(['scm', 'store']); }
@@ -30,12 +33,14 @@ service cloud.firestore {
     match /pf_reworks/{id}    { allow write: if by(['production']); }
     match /pf_mods/{id}       { allow write: if by(['rnd']); }
 
-    // ---------- Traceability (this app) ----------
+    // ---------- Ronch Trace ----------
     // Station terminals write unit records, the enclosure index and boxes.
     match /tr_units/{id}   { allow write: if by(['production']); }
     match /tr_enc/{id}     { allow write: if by(['production']); }
     match /tr_boxes/{id}   { allow write: if by(['production']); }
     match /tr_batches/{id} { allow write: if by(['production']); }
+    // Per-work-order counters that Ronch CRM reads (written by Trace stations only).
+    match /tr_wostats/{id} { allow write: if by(['production']); }
 
     // Test limits and settings are set up once; quality may change limits.
     match /tr_limits/{id}  { allow write: if by(['production', 'quality']); }
