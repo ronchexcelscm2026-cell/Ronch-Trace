@@ -245,10 +245,11 @@
     </div>
     <label style="color:var(--dim);font-size:13px;display:block;margin-bottom:6px">Department</label>
     <select id="loginUser" class="small" style="width:100%;font-size:16px;padding:11px 12px"
-            onchange="showLoginEmail()"></select>
+            onchange="showLoginEmail()" onkeydown="if(event.key==='Enter'){event.preventDefault();doSignIn();}"></select>
     <div id="loginEmail" class="mono" style="color:var(--faint);font-size:12px;margin-top:6px"></div>
     <label style="color:var(--dim);font-size:13px;display:block;margin:16px 0 6px">Password</label>
-    <input id="loginPass" type="password" style="font-size:18px;padding:13px 14px" autocomplete="current-password">
+    <input id="loginPass" type="password" style="font-size:18px;padding:13px 14px" autocomplete="current-password"
+           onkeydown="if(event.key==='Enter'){event.preventDefault();doSignIn();}">
     <button class="bigbtn" style="justify-content:center;margin-top:18px;color:var(--ok);border-color:var(--ok)"
             onclick="doSignIn()">Sign in</button>
     <div id="loginErr" style="margin-top:14px;color:var(--bad);font-size:14px"></div>
@@ -1171,6 +1172,23 @@ function cloudFail(what, e){
     + xmlEsc(CLOUD.lastErr) + '</div>'
     + '<div class="muted" style="margin-top:12px;font-size:13px">'
     + 'Check that the security rules are published and this login is allowed.</div>';
+  /* Also show it on whatever screen is open, with any Firebase link clickable
+     (a missing index comes with a one-click "create index" link). */
+  var bar = document.getElementById("cloudErrBar");
+  if(!bar){
+    bar = document.createElement("div"); bar.id = "cloudErrBar";
+    bar.style.cssText = "position:fixed;left:16px;right:16px;bottom:16px;z-index:9999;background:#2A0F12;"
+      + "border:1px solid var(--bad);color:var(--text);border-radius:9px;padding:12px 16px;font-size:14px;"
+      + "line-height:1.5;word-break:break-word;max-height:40vh;overflow:auto";
+    document.body.appendChild(bar);
+  }
+  var msg = xmlEsc(CLOUD.lastErr).replace(/(https:\/\/[^\s<]+)/g,
+    '<a href="$1" target="_blank" rel="noopener" style="color:var(--info)">$1</a>');
+  var isIndex = /requires an index|index/i.test(CLOUD.lastErr);
+  bar.innerHTML = '<b style="color:var(--bad)">Could not read ' + xmlEsc(what) + '</b><br>' + msg
+    + (isIndex ? '<div style="margin-top:8px;color:var(--wait)">Firestore needs an index for this. Sign in to the Firebase console, '
+      + 'click the link above, press <b>Create index</b>, wait 2–5 minutes until it shows <b>Enabled</b>, then reload this page.</div>' : '')
+    + '<div style="margin-top:8px"><button class="ghost" onclick="location.reload()">Reload</button></div>';
 }
 
 function renderAll(){
@@ -1391,7 +1409,7 @@ function hhmm(iso){ return iso ? new Date(iso).toLocaleTimeString([], {hour:"2-d
 /* Stamped at build time. The station PCs keep this page open all day, so the
    app asks the server now and then whether a newer build has been published
    rather than relying on anyone remembering to reload after a deploy. */
-var BUILD_ID = "2026-10-16-2130";
+var BUILD_ID = "2026-10-17-1100";
 var UPDATE_SEEN = false, UPDATE_CHECKED = 0;
 
 function checkForUpdate(){
