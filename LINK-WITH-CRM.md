@@ -1,5 +1,7 @@
 # Link with Ronch CRM (work orders)
 
+**Status: switched OFF.** Ronch Trace currently runs on its own: no work order is asked at MI Line and nothing is sent to the CRM. To switch it on later, add `linkCrmWO: true` to `APP_SETTINGS` in `firebase-config.js` and upload that file. Everything below then applies.
+
 - **MI Line:** choose the running Ronch CRM work order in the **Work order (Ronch CRM)** box under the counters. Only open CRM work orders are listed; the choice is remembered on that PC. Scanning without a WO is refused.
 - The first board on a WO fixes its model (product type, control, version, wattage, current). A board of another model is refused. Customer, warranty, wire and housing may differ (one WO can club several customers' orders).
 - The banner shows the count, e.g. **WO-0012 · 37 of 500**. Going over the WO quantity is allowed but shown in amber.

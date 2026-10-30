@@ -32,7 +32,7 @@
     color:var(--text);font-family:var(--mono);font-size:22px;padding:16px 18px;outline:none}
   input:focus{border-color:var(--info)}
   input.small{width:80px;padding:6px 10px;font-size:15px}
-  input.scan-only{caret-color:transparent;user-select:none}
+  input.scan-only{caret-color:transparent;user-select:none;position:absolute;left:-10000px;top:auto;width:1px;height:1px;opacity:0;pointer-events:none}
   .bigbtn{width:100%;display:flex;align-items:center;gap:14px;background:var(--panel);
     border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:18px;
     padding:18px 20px;margin-bottom:10px;text-align:left}
@@ -287,6 +287,15 @@
     <p class="sec-sub">It stays locked to that station until you change it deliberately.</p>
     <div id="stationList" class="station-grid"></div>
 
+    <h2 class="sec">Two stations on this computer</h2>
+    <p class="sec-sub">One screen split in two, one operator and one scanner per half. Each scanner must send its prefix (L or R) before every code.</p>
+    <div class="station-grid">
+      <button class="st-card" onclick="location.href='dual.html?pair=MI,PCBA'"><span class="tag">2 operators</span><span class="num">1 + 2</span><span class="nm">MI Line + PCBA testing</span><span class="sc">Left: MI Line · Right: PCBA</span></button>
+      <button class="st-card" onclick="location.href='dual.html?pair=AGEING_IN,AGEING_OUT'"><span class="tag">2 operators</span><span class="num">4a + 4b</span><span class="nm">Ageing load + unload</span><span class="sc">Left: load · Right: unload</span></button>
+      <button class="st-card" onclick="location.href='dual.html?pair=FINAL,PACKING'"><span class="tag">2 operators</span><span class="num">5 + 6</span><span class="nm">Final testing + Packing</span><span class="sc">Left: Final · Right: Packing</span></button>
+      <button class="st-card" onclick="printCommandCards()"><span class="tag">print</span><span class="num">CMD</span><span class="nm">Command cards</span><span class="sc">PASS / FAIL / reason cards to scan</span></button>
+    </div>
+
     <h2 class="sec">Reports and setup</h2>
     <div style="display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:0 0 14px">
       <span style="color:var(--dim);font-size:13px">Report period</span>
@@ -521,9 +530,6 @@
       <button class="ghost" style="margin-top:14px" onclick="hideFailCodes()">Back</button>
     </div>
 
-    <div id="analyserPanel" class="hide" style="margin-top:20px;padding:14px 16px;background:var(--panel);
-         border:1px solid var(--line);border-radius:6px"></div>
-
     <div id="limitsPanel" class="hide" style="margin-top:14px;padding:16px;background:var(--panel);
          border:1px solid var(--line);border-radius:6px">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
@@ -559,50 +565,10 @@
       </div>
     </div>
 
-    <div id="analyserSetup" class="hide" style="margin-top:10px;padding:14px 16px;background:var(--panel);
-         border:1px solid var(--line);border-radius:6px">
-      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
-        <label style="color:var(--dim);font-size:13px">Baud rate<br>
-          <select id="anBaud" class="small" style="width:110px" onchange="setAn('baud', this.value)">
-            <option>4800</option><option>9600</option><option>19200</option>
-            <option>38400</option><option>57600</option><option>115200</option>
-          </select></label>
-        <label style="color:var(--dim);font-size:13px">Line format<br>
-          <select id="anMode" class="small" style="width:150px" onchange="setAn('mode', this.value)">
-            <option value="dtm1">DTM-1 (Embuilt) protocol</option>
-            <option value="verdict">Pass/Fail only</option>
-            <option value="steps">Multi-step safety tester</option>
-            <option value="auto">Labelled (V=230.1)</option>
-            <option value="csv">CSV / positional</option>
-          </select></label>
-        <label style="color:var(--dim);font-size:13px">Settle time (s)<br>
-          <input id="anSettle" class="small" type="number" min="0" max="30" step="0.5"
-                 style="width:80px" onchange="setAn('settle', this.value)"></label>
-        <label style="color:var(--dim);font-size:13px">Average samples<br>
-          <input id="anSamples" class="small" type="number" min="1" max="50" step="1"
-                 style="width:80px" onchange="setAn('samples', this.value)"></label>
-      </div>
-      <div id="anTokens" class="hide" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px">
-        <label style="color:var(--dim);font-size:13px">Pass text<br>
-          <input id="anPass" class="small" style="width:190px;font-family:var(--mono)"
-                 onchange="setAn('passToken', this.value)"></label>
-        <label style="color:var(--dim);font-size:13px">Fail text<br>
-          <input id="anFail" class="small" style="width:190px;font-family:var(--mono)"
-                 onchange="setAn('failToken', this.value)"></label>
-      </div>
-      <label style="color:var(--dim);font-size:13px;display:block;margin-top:12px">Column map (CSV mode only)
-        <input id="anMap" class="small" style="width:100%;font-size:13px;margin-top:5px"
-               placeholder="0=VIN:V, 1=IIN:A, 2=PIN:W, 3=PF, 4=VOUT:V, 5=IOUT:A"
-               onchange="setAn('map', this.value)"></label>
-      <div class="muted" style="font-size:12px;margin-top:8px">
-        Watch the raw feed above, then map each column position to a parameter code and unit.
-      </div>
-    </div>
-
     <input id="scan" class="scan-only" autocomplete="off" spellcheck="false" readonly
            aria-label="Scanner input only" aria-readonly="true">
-    <div style="color:var(--faint);font-size:13px;margin-top:8px">
-      Scanner input only — manual typing and paste are disabled. <span id="codeHint"></span>
+    <div style="color:var(--faint);font-size:13px;margin-top:18px">
+      <span class="an-dot" style="background:var(--ok)"></span>Ready for the scanner — manual typing and paste are disabled. <span id="codeHint"></span>
     </div>
 
     <div class="counts" id="counts"></div>
@@ -702,6 +668,51 @@
 </div>
 
 <div id="packingPanel" class="packing-panel hide"></div>
+
+    <!-- Instrument connection and its settings: kept at the bottom of every station -->
+    <div id="analyserPanel" class="hide" style="margin-top:28px;padding:14px 16px;background:var(--panel);
+         border:1px solid var(--line);border-radius:6px"></div>
+
+    <div id="analyserSetup" class="hide" style="margin-top:10px;padding:14px 16px;background:var(--panel);
+         border:1px solid var(--line);border-radius:6px">
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
+        <label style="color:var(--dim);font-size:13px">Baud rate<br>
+          <select id="anBaud" class="small" style="width:110px" onchange="setAn('baud', this.value)">
+            <option>4800</option><option>9600</option><option>19200</option>
+            <option>38400</option><option>57600</option><option>115200</option>
+          </select></label>
+        <label style="color:var(--dim);font-size:13px">Line format<br>
+          <select id="anMode" class="small" style="width:150px" onchange="setAn('mode', this.value)">
+            <option value="dtm1">DTM-1 (Embuilt) protocol</option>
+            <option value="verdict">Pass/Fail only</option>
+            <option value="steps">Multi-step safety tester</option>
+            <option value="auto">Labelled (V=230.1)</option>
+            <option value="csv">CSV / positional</option>
+          </select></label>
+        <label style="color:var(--dim);font-size:13px">Settle time (s)<br>
+          <input id="anSettle" class="small" type="number" min="0" max="30" step="0.5"
+                 style="width:80px" onchange="setAn('settle', this.value)"></label>
+        <label style="color:var(--dim);font-size:13px">Average samples<br>
+          <input id="anSamples" class="small" type="number" min="1" max="50" step="1"
+                 style="width:80px" onchange="setAn('samples', this.value)"></label>
+      </div>
+      <div id="anTokens" class="hide" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px">
+        <label style="color:var(--dim);font-size:13px">Pass text<br>
+          <input id="anPass" class="small" style="width:190px;font-family:var(--mono)"
+                 onchange="setAn('passToken', this.value)"></label>
+        <label style="color:var(--dim);font-size:13px">Fail text<br>
+          <input id="anFail" class="small" style="width:190px;font-family:var(--mono)"
+                 onchange="setAn('failToken', this.value)"></label>
+      </div>
+      <label style="color:var(--dim);font-size:13px;display:block;margin-top:12px">Column map (CSV mode only)
+        <input id="anMap" class="small" style="width:100%;font-size:13px;margin-top:5px"
+               placeholder="0=VIN:V, 1=IIN:A, 2=PIN:W, 3=PF, 4=VOUT:V, 5=IOUT:A"
+               onchange="setAn('map', this.value)"></label>
+      <div class="muted" style="font-size:12px;margin-top:8px">
+        Watch the raw feed above, then map each column position to a parameter code and unit.
+      </div>
+    </div>
+
   </div>
 
   <div id="records" class="hide" style="border-top:1px solid var(--line)">
@@ -1409,7 +1420,7 @@ function hhmm(iso){ return iso ? new Date(iso).toLocaleTimeString([], {hour:"2-d
 /* Stamped at build time. The station PCs keep this page open all day, so the
    app asks the server now and then whether a newer build has been published
    rather than relying on anyone remembering to reload after a deploy. */
-var BUILD_ID = "2026-10-17-1100";
+var BUILD_ID = "2026-10-22-1200";
 var UPDATE_SEEN = false, UPDATE_CHECKED = 0;
 
 function checkForUpdate(){
@@ -1454,6 +1465,7 @@ function show(id){ el(id).classList.remove("hide"); }
 function hide(id){ el(id).classList.add("hide"); }
 function terminalOpen(){ return !el("term").classList.contains("hide"); }
 function focusScan(){
+  if(EMBED) return;
   if(!terminalOpen() || !el("failRow").classList.contains("hide")) return;
   setTimeout(function(){
     if(terminalOpen() && el("failRow").classList.contains("hide")) el("scan").focus();
@@ -1493,7 +1505,23 @@ function save(){
 
 /* Per-computer settings: which station this terminal is, and the instrument
    port settings for it. These must NOT be shared — each PC has its own. */
-var PCKEY = "ronch-trace-pc-v1";
+/* Two stations on one computer: dual.html shows two copies of this page side
+   by side (index.html?embed=L&station=MI and ?embed=R&station=PCBA). Each half
+   is a complete station with its own operator; dual.html reads both scanners and
+   hands every code to the half whose scanner sent it. */
+var EMBED = (function(){
+  try{ var v = new URLSearchParams(location.search).get("embed"); return (v === "L" || v === "R") ? v : null; }
+  catch(e){ return null; }
+})();
+var EMBED_STATION = (function(){
+  try{ return EMBED ? (new URLSearchParams(location.search).get("station") || "") : ""; }catch(e){ return ""; }
+})();
+var DUAL_KEY = "ronch-trace-dual-v1";
+if(!EMBED){ try{ if(localStorage.getItem(DUAL_KEY)) location.replace("dual.html"); }catch(e){} }
+else { (function(){ var st = document.createElement("style");
+  st.textContent = '[onclick="changeStation()"]{display:none!important}';
+  document.head.appendChild(st); })(); }
+var PCKEY = "ronch-trace-pc-v1" + (EMBED ? "-" + EMBED : "");
 function savePC(){
   try{
     localStorage.setItem(PCKEY, JSON.stringify({
@@ -1610,7 +1638,67 @@ function absorb(u){
   if(u.enclosure) db.encIndex[u.enclosure] = u.board;
 }
 
+/* Printed command cards let an operator give the verdict with the scanner
+   (needed when two stations share one keyboard): CMD-PASS, CMD-FAIL,
+   CMD-F1 … CMD-F7 (failure reason by number) and CMD-BACK. */
+function runCommand(c){
+  if(!station) return;
+  var judging = !!pending && stationJudges();
+  if(c === "PASS"){
+    if(!judging) return reject("Nothing to pass", "Scan a driver first, then the PASS card.");
+    if(failRowOpen()){ hideFailCodes(); }
+    return passButton();
+  }
+  if(c === "FAIL"){
+    if(!judging) return reject("Nothing to fail", "Scan a driver first, then the FAIL card.");
+    return failButton();
+  }
+  if(c === "BACK"){
+    if(failRowOpen()){ hideFailCodes(); show("verdictRow"); }
+    return;
+  }
+  var m = /^F([1-9])$/.exec(c);
+  if(m){
+    if(!judging || !failRowOpen()) return reject("Scan FAIL first", "Scan the FAIL card, then the card for the failure reason.");
+    var codes = currentFailCodes(), i = parseInt(m[1], 10) - 1;
+    if(i >= codes.length) return reject("No reason " + m[1] + " here", "This station has " + codes.length + " reasons. Choose one on the screen.");
+    return recordVerdict("FAIL", codes[i]);
+  }
+  reject("Unknown command card", c);
+}
+window.externalScan = function(code){
+  if(terminalOpen()){ handleScan(code); return true; }
+  if(signinOpen()){ acceptBadge(code); return true; }
+  return false;
+};
+function printCommandCards(){
+  var cards = [["CMD-PASS","PASS","Record a pass"],["CMD-FAIL","FAIL","Then scan the reason"],["CMD-BACK","BACK","Leave the reason list"]];
+  for(var i = 1; i <= 7; i++){
+    var lines = ["PCBA","HIPOT","AGEING_OUT","FINAL"].map(function(k){
+      var nm = {PCBA:"PCBA", HIPOT:"Hi-pot", AGEING_OUT:"Ageing", FINAL:"Final"}[k];
+      var r = (FAIL_CODES[k] || [])[i - 1];
+      return r ? nm + ": " + r : null;
+    }).filter(Boolean);
+    if(lines.length) cards.push(["CMD-F" + i, "REASON " + i, lines.join("<br>")]);
+  }
+  var html = '<!doctype html><html><head><meta charset="utf-8"><title>Ronch Trace command cards</title><style>'
+    + 'body{font-family:Arial,sans-serif;margin:10mm}h1{font-size:16px;margin:0 0 8mm}'
+    + '.g{display:grid;grid-template-columns:repeat(3,1fr);gap:6mm}'
+    + '.c{border:1px solid #333;border-radius:3mm;padding:4mm;text-align:center;page-break-inside:avoid}'
+    + '.c svg{width:38mm;height:38mm}.t{font-size:20px;font-weight:700;margin-top:2mm}'
+    + '.d{font-size:10px;color:#444;margin-top:2mm;line-height:1.35}.k{font-family:monospace;font-size:10px;color:#777}'
+    + '</style></head><body><h1>Ronch Trace — command cards (scan with the station\'s own scanner)</h1><div class="g">'
+    + cards.map(function(c){ return '<div class="c">' + qrSvg(c[0]) + '<div class="t">' + c[1] + '</div>'
+      + '<div class="d">' + c[2] + '</div><div class="k">' + c[0] + '</div></div>'; }).join("")
+    + '</div><script>setTimeout(function(){print()},300)<\/script></body></html>';
+  var w = window.open("", "_blank");
+  if(!w) return notify("wait", "Pop-up blocked", "Allow pop-ups for this site to print the command cards.");
+  w.document.open(); w.document.write(html); w.document.close();
+}
+
 function handleScan(raw){
+  var cmd = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if(cmd.indexOf("CMD") === 0) return runCommand(cmd.slice(3));
   var c0 = classify(raw);
   var worthChecking = CLOUD.on && CLOUD.ready && c0.wellFormed &&
                       (c0.kind === "board" || c0.kind === "enclosure") &&
@@ -5800,6 +5888,62 @@ function delRun(){
   render();
 }
 
+/* The counters shown on a station screen: only what that station works on.
+   Everything is counted from the live (unpacked) units, so it is exact. */
+function isTodayISO(iso){
+  if(!iso) return false;
+  var d = new Date(iso), p = function(n){ return (n < 10 ? "0" : "") + n; };
+  return (d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())) === todayISO();
+}
+function stationCounts(list, c){
+  var live = function(u){ return u.status !== "REWORK" && u.status !== "SCRAP"; };
+  var n = function(f){ return list.filter(f).length; };
+  var atBench = function(key){ return n(function(u){
+    if(u.status !== "REWORK") return false; var r = lastRejection(u); return !!(r && r.station === key); }); };
+  var passed = function(e){ return !!(e && e.verdict === "PASS"); };
+  var k = station ? station.key : "";
+  if(k === "MI") return [
+    ["Booked in today", n(function(u){ return u.miLine && isTodayISO(u.miLine.at); })],
+    ["Waiting for PCBA testing", n(function(u){ return u.miLine && !passed(u.stage1) && live(u); })],
+    ["WIP Production", c.total]];
+  if(k === "PCBA") return [
+    ["Waiting for PCBA testing", n(function(u){ return u.miLine && !passed(u.stage1) && live(u); })],
+    ["Passed today", n(function(u){ return passed(u.stage1) && isTodayISO(u.stage1.at); })],
+    ["Failed here, at repair bench", atBench("PCBA")]];
+  if(k === "HIPOT") return [
+    ["Waiting for hi-pot", n(function(u){ return passed(u.stage1) && !passed(u.stage2) && live(u); })],
+    ["Passed today", n(function(u){ return passed(u.stage2) && isTodayISO(u.stage2.at); })],
+    ["Failed here, at repair bench", atBench("HIPOT")]];
+  if(k === "AGEING_IN") return [
+    ["Waiting to load", n(function(u){ return passed(u.stage2) && !u.ageingIn && live(u); })],
+    ["In the chamber", c.ageing],
+    ["Loaded today", n(function(u){ return u.ageingIn && isTodayISO(u.ageingIn); })]];
+  if(k === "AGEING_OUT") return [
+    ["In the chamber", c.ageing],
+    ["Ready to unload", n(function(u){ return u.ageingIn && !u.ageingOut
+      && (Date.now() - new Date(u.ageingIn).getTime()) / 60000 >= ageingMinsForUnit(u); })],
+    ["Passed today", n(function(u){ return passed(u.ageingResult) && isTodayISO(u.ageingResult.at); })],
+    ["Failed here, at repair bench", atBench("AGEING_OUT")]];
+  if(k === "FINAL") return [
+    ["Waiting for final test", n(function(u){ return passed(u.ageingResult) && !passed(u.stage4) && live(u); })],
+    ["Passed today", n(function(u){ return passed(u.stage4) && isTodayISO(u.stage4.at); })],
+    ["Failed here, at repair bench", atBench("FINAL")]];
+  if(k === "PACKING"){
+    var todayBoxes = (db.boxes || []).filter(function(b){ return isTodayISO(b.createdAt); });
+    return [
+      ["Pending for packing", c.done],
+      ["In the current box", (db.packing.current || []).length],
+      ["Packed today", todayBoxes.reduce(function(t, b){ return t + (b.quantity || 0); }, 0)],
+      ["Master boxes today", todayBoxes.length]];
+  }
+  if(k === "REPAIR") return [
+    ["WIP Rework Bench", c.rework],
+    ["Repaired, waiting for PCBA", c.repaired],
+    ["Scrapped", c.scrap]];
+  return [["WIP Production", c.total], ["In Ageing", c.ageing], ["Pending for Packing", c.done],
+          ["WIP Rework Bench", c.rework], ["Scrapped", c.scrap]];
+}
+
 function render(){
   renderWoRow();
   if(el("delPanel")) el("delPanel").classList.toggle("hide", !isAdminUser());
@@ -5822,7 +5966,7 @@ function render(){
     scrap: list.filter(function(u){ return u.status === "SCRAP"; }).length,
     rework: list.filter(function(u){ return u.status === "REWORK"; }).length
   };
-  el("counts").innerHTML = [["WIP Production",c.total],["Paired",c.paired],["In Ageing",c.ageing],["Pending for Packing",c.done],["Packed",c.packed],["Master Boxes",db.boxes.length],["WIP Rework Bench",c.rework],["Rework Completed",c.repaired],["Scrapped",c.scrap]]
+  el("counts").innerHTML = stationCounts(list, c)
     .map(function(p){ return '<div><div class="n">' + p[1] + '</div><div class="k">' + p[0] + '</div></div>'; }).join("");
 
   el("bandNote").textContent = halfPair
@@ -5968,7 +6112,8 @@ function afterCloudReady(){
   buildStationCards();
   renderDashboard();
   mirrorSync();
-  var s = PC_STATION && STAGES.filter(function(x){ return x.key === PC_STATION; })[0];
+  var want = EMBED ? EMBED_STATION : PC_STATION;
+  var s = want && STAGES.filter(function(x){ return x.key === want; })[0];
   if(s){ pickStation(s); } else { show("pick"); }
 }
 
@@ -6120,6 +6265,17 @@ el("scan").addEventListener("drop", function(e){ e.preventDefault(); });
 
 // Capture scanner keystrokes without allowing the scan field to be typed into.
 document.addEventListener("keydown", function(e){
+  if(EMBED){
+    var tg = e.target;
+    var editable = tg && (tg.tagName === "TEXTAREA" || tg.tagName === "SELECT"
+      || (tg.tagName === "INPUT" && !tg.readOnly && tg.id !== "scan" && tg.id !== "opInput"));
+    if(editable || e.ctrlKey || e.altKey || e.metaKey || e.key === "Tab") return;
+    if(e.key === "Enter" || e.key.length === 1){
+      e.preventDefault();
+      try{ window.parent.__dualKey(e.key, Date.now()); }catch(x){}
+    }
+    return;
+  }
   var onSignin = !terminalOpen() && signinOpen();
   if(!terminalOpen() && !onSignin) return;
   var target = e.target;

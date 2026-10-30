@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ronch Trace — two stations</title>
+<link rel="icon" href="icons/icon-192.png">
+<style>
+  :root{--base:#10151A;--panel:#18202A;--panel2:#1E2833;--line:#2A3542;--text:#E6EDF3;--dim:#9AA7B4;
+        --faint:#6B7785;--ok:#3FB950;--bad:#F85149;--wait:#E3A23A;--info:#4D9BFF}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--base);color:var(--text);
+            font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+  body{display:flex;flex-direction:column;overflow:hidden}
+  .bar{display:flex;align-items:center;gap:12px;padding:7px 14px;border-bottom:1px solid var(--line);
+       background:var(--panel);flex-wrap:wrap;font-size:14px}
+  .bar b{color:var(--ok);letter-spacing:2px;font-size:15px}
+  .tag{font-family:ui-monospace,Consolas,monospace;font-size:12px;border:1px solid var(--line);
+       border-radius:4px;padding:2px 7px;color:var(--dim)}
+  .tag.l{border-color:var(--info);color:var(--info)} .tag.r{border-color:var(--wait);color:var(--wait)}
+  button{font:inherit;font-size:13px;background:transparent;color:var(--dim);border:1px solid var(--line);
+         border-radius:6px;padding:6px 11px;cursor:pointer}
+  button:hover{color:var(--text);border-color:var(--info)}
+  #msg{flex:1;min-width:200px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #msg.bad{color:var(--bad)} #msg.ok{color:var(--ok)}
+  .halves{flex:1;display:flex;min-height:0}
+  .half{flex:1;display:flex;flex-direction:column;min-width:0;border-top:3px solid transparent;transition:border-color .2s}
+  .half + .half{border-left:2px solid var(--line)}
+  .half.flash-l{border-top-color:var(--info)} .half.flash-r{border-top-color:var(--wait)}
+  .half iframe{flex:1;width:100%;border:0;background:var(--base)}
+  #setup{display:none;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--panel2);font-size:14px;line-height:1.6}
+  #setup.open{display:block}
+  #setup input,#setup select{font:inherit;background:var(--panel);color:var(--text);border:1px solid var(--line);
+         border-radius:5px;padding:5px 8px;width:70px;margin:0 6px}
+  #setup select{width:auto}
+  #setup .muted{color:var(--dim);font-size:13px}
+</style>
+</head>
+<body>
+<div class="bar">
+  <b>RONCH TRACE</b>
+  <span>Two stations on this computer</span>
+  <span class="tag l" id="tagL"></span>
+  <span class="tag r" id="tagR"></span>
+  <span id="msg">Ready for both scanners</span>
+  <button onclick="toggleSetup()">Scanner setup</button>
+  <button onclick="cards()">Command cards</button>
+  <button onclick="exitDual()">Back to one station</button>
+</div>
+<div id="setup">
+  <div>Each scanner must send a <b>prefix</b> in front of every code, so this screen knows which half the scan belongs to.
+    Set it once with the &ldquo;Add prefix&rdquo; barcode in the scanner&rsquo;s manual.</div>
+  <div style="margin-top:8px">
+    Left scanner prefix <input id="pL" maxlength="4" onchange="saveCfg()">
+    Right scanner prefix <input id="pR" maxlength="4" onchange="saveCfg()">
+    Scans without a prefix go to
+    <select id="noPre" onchange="saveCfg()">
+      <option value="">nobody (refuse)</option>
+      <option value="L">the left half</option>
+      <option value="R">the right half</option>
+    </select>
+  </div>
+  <div class="muted" style="margin-top:6px">Test: scan any code with each scanner. The bar above says which half received it.
+    Verdicts: click Pass / Fail on the screen, or scan the printed PASS / FAIL / REASON cards with that half&rsquo;s scanner.</div>
+</div>
+<div class="halves">
+  <div class="half" id="halfL"><iframe id="fL" title="Left station" allow="serial; hid"></iframe></div>
+  <div class="half" id="halfR"><iframe id="fR" title="Right station" allow="serial; hid"></iframe></div>
+</div>
+<script>
+var DUAL_KEY = "ronch-trace-dual-v1";
+var PAIRS = {"MI,PCBA":["MI Line","PCBA testing"], "AGEING_IN,AGEING_OUT":["Ageing load","Ageing unload"],
+             "FINAL,PACKING":["Final testing","Packing"]};
+var cfg = {pair:"", pL:"L", pR:"R", noPre:""};
+try{ var saved = JSON.parse(localStorage.getItem(DUAL_KEY) || "null"); if(saved) for(var k in saved) cfg[k] = saved[k]; }catch(e){}
+var q = new URLSearchParams(location.search).get("pair");
+if(q && PAIRS[q]) cfg.pair = q;
+if(!PAIRS[cfg.pair]){ location.replace("index.html"); }
+function saveCfg(){
+  cfg.pL = (document.getElementById("pL").value || "L").toUpperCase();
+  cfg.pR = (document.getElementById("pR").value || "R").toUpperCase();
+  cfg.noPre = document.getElementById("noPre").value;
+  try{ localStorage.setItem(DUAL_KEY, JSON.stringify(cfg)); }catch(e){}
+  paintTags();
+}
+function paintTags(){
+  var n = PAIRS[cfg.pair];
+  document.getElementById("tagL").textContent = "Left · " + n[0] + " · prefix " + cfg.pL;
+  document.getElementById("tagR").textContent = "Right · " + n[1] + " · prefix " + cfg.pR;
+}
+document.getElementById("pL").value = cfg.pL;
+document.getElementById("pR").value = cfg.pR;
+document.getElementById("noPre").value = cfg.noPre;
+try{ localStorage.setItem(DUAL_KEY, JSON.stringify(cfg)); }catch(e){}
+paintTags();
+var st = cfg.pair.split(",");
+document.getElementById("fL").src = "index.html?embed=L&station=" + st[0];
+document.getElementById("fR").src = "index.html?embed=R&station=" + st[1];
+
+function toggleSetup(){ document.getElementById("setup").classList.toggle("open"); }
+function exitDual(){
+  if(!confirm("Switch this computer back to a single station?")) return;
+  try{ localStorage.removeItem(DUAL_KEY); }catch(e){}
+  location.href = "index.html";
+}
+function cards(){
+  try{ document.getElementById("fL").contentWindow.printCommandCards(); }
+  catch(e){ say("bad", "Open the left half first, then try again."); }
+}
+var msgT = null;
+function say(tone, text){
+  var m = document.getElementById("msg"); m.className = tone || ""; m.textContent = text;
+  clearTimeout(msgT); msgT = setTimeout(function(){ m.className = ""; m.textContent = "Ready for both scanners"; }, 6000);
+}
+function flash(side){
+  var h = document.getElementById("half" + side); h.classList.add(side === "L" ? "flash-l" : "flash-r");
+  setTimeout(function(){ h.classList.remove("flash-l", "flash-r"); }, 600);
+}
+function badBeep(){
+  try{ var AC = window.AudioContext || window.webkitAudioContext, c = new AC(), o = c.createOscillator(), g = c.createGain();
+    o.connect(g); g.connect(c.destination); o.frequency.value = 220; g.gain.value = .15; o.start(); setTimeout(function(){ o.stop(); c.close(); }, 350); }catch(e){}
+}
+
+/* Scanner keystrokes. Both scanners type into the same keyboard stream; the
+   prefix tells them apart. A code typed slower than a scanner is refused. */
+var MAX_GAP = 90, buf = "", t0 = 0, last = 0, gapMax = 0;
+function key(k, t){
+  if(k === "Enter"){
+    var code = buf, dur = t0 ? t - t0 : 0, fast = gapMax <= MAX_GAP && dur <= Math.max(500, code.length * MAX_GAP);
+    buf = ""; t0 = 0; last = 0; gapMax = 0;
+    if(!code) return;
+    if(!fast){ badBeep(); return say("bad", "Manual typing blocked — use the scanner."); }
+    route(code); return;
+  }
+  if(k.length !== 1) return;
+  if(last && t - last > MAX_GAP){ buf = ""; t0 = 0; gapMax = 0; }
+  if(!t0) t0 = t;
+  if(last) gapMax = Math.max(gapMax, t - last);
+  last = t; buf += k;
+}
+function route(raw){
+  var code = raw.trim(), up = code.toUpperCase(), side = null;
+  var pL = cfg.pL.toUpperCase(), pR = cfg.pR.toUpperCase();
+  if(pL && up.indexOf(pL) === 0 && !(pR.length > pL.length && up.indexOf(pR) === 0)){ side = "L"; code = code.slice(pL.length); }
+  else if(pR && up.indexOf(pR) === 0){ side = "R"; code = code.slice(pR.length); }
+  else if(cfg.noPre){ side = cfg.noPre; }
+  if(!side){ badBeep(); return say("bad", "Scan without a scanner prefix (" + raw + "). Set up the scanners: " + pL + " / " + pR + "."); }
+  var w = document.getElementById("f" + side).contentWindow, ok = false;
+  try{ ok = w.externalScan(code); }catch(e){}
+  flash(side);
+  var name = PAIRS[cfg.pair][side === "L" ? 0 : 1];
+  if(!ok){ badBeep(); return say("bad", name + " is not ready for scans (sign in or choose the station first)."); }
+  say("ok", (side === "L" ? "Left" : "Right") + " · " + name + " ← " + code);
+}
+window.__dualKey = key;
+document.addEventListener("keydown", function(e){
+  var tg = e.target;
+  if(tg && (tg.tagName === "INPUT" || tg.tagName === "SELECT" || tg.tagName === "TEXTAREA")) return;
+  if(e.ctrlKey || e.altKey || e.metaKey || e.key === "Tab") return;
+  if(e.key === "Enter" || e.key.length === 1){ e.preventDefault(); key(e.key, Date.now()); }
+});
+</script>
+</body>
+</html>

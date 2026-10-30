@@ -1,8 +1,8 @@
 // Ronch Traceability · offline shell (network first, cache as fallback).
 // The app must keep working at the bench when the network drops, so the page
 // itself is cached. Firebase data never is — Firestore does its own offline.
-const CACHE = "ronch-trace-v13";
-const SHELL = ["./", "index.html", "firebase-config.js", "manifest.json",
+const CACHE = "ronch-trace-v14";
+const SHELL = ["./", "index.html", "dual.html", "firebase-config.js", "manifest.json",
                "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", e => {
