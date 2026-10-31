@@ -42,6 +42,8 @@
   .ghost:hover{color:var(--text)}
   .verdict{flex:1;padding:26px 0;font-size:24px;font-weight:500;border:1px solid;border-radius:6px}
   .pass{background:var(--okd);color:var(--ok);border-color:var(--ok)}
+  #verdictRow.idle .verdict{opacity:.3;cursor:not-allowed}
+  #verdictRow{margin-bottom:6px}
   .fail{background:var(--badd);color:var(--bad);border-color:var(--bad)}
   .pill{border:1px solid var(--line);border-radius:4px;padding:4px 9px;font-size:12px;color:var(--dim)}
   .code{border:1px solid var(--line);border-radius:4px;padding:10px 14px;font-size:14px;
@@ -596,9 +598,7 @@
 
     <input id="scan" class="scan-only" autocomplete="off" spellcheck="false" readonly
            aria-label="Scanner input only" aria-readonly="true">
-    <div style="color:var(--faint);font-size:13px;margin-top:18px">
-      <span class="an-dot" style="background:var(--ok)"></span>Ready for the scanner — manual typing and paste are disabled. <span id="codeHint"></span>
-    </div>
+    <span id="codeHint" style="display:none"></span>
 
     <div class="counts" id="counts"></div>
     <div id="woRow" class="hide" style="margin-top:22px;padding:14px 16px;background:var(--panel);
@@ -1449,7 +1449,7 @@ function hhmm(iso){ return iso ? new Date(iso).toLocaleTimeString([], {hour:"2-d
 /* Stamped at build time. The station PCs keep this page open all day, so the
    app asks the server now and then whether a newer build has been published
    rather than relying on anyone remembering to reload after a deploy. */
-var BUILD_ID = "2026-11-01-1000";
+var BUILD_ID = "2026-11-01-1500";
 var UPDATE_SEEN = false, UPDATE_CHECKED = 0;
 
 function checkForUpdate(){
@@ -2202,6 +2202,7 @@ function blankUnit(board){
 }
 
 function failButton(){
+  if(!pending) return;
   var sug = suggestedVerdict();
   if(sug && sug.verdict === "FAIL") return recordVerdict("FAIL", sug.failCode || "LIMIT");
   if(sug && sug.verdict === "PASS"){
@@ -2215,6 +2216,7 @@ function failButton(){
 }
 
 function passButton(){
+  if(!pending) return;
   var sug = (typeof suggestedVerdict === "function") ? suggestedVerdict() : null;
   if(sug && sug.verdict === "FAIL"){
     var why = (A.captured.failing && A.captured.failing.length)
@@ -6078,7 +6080,9 @@ function render(){
 
   if(typeof renderAgeRow === "function") renderAgeRow();
   var canJudge = !!pending && stationJudges();
-  if(canJudge && el("failRow").classList.contains("hide")) show("verdictRow"); else hide("verdictRow");
+  if(stationJudges() && el("failRow").classList.contains("hide") && el("repRow").classList.contains("hide")) show("verdictRow");
+  else hide("verdictRow");
+  el("verdictRow").classList.toggle("idle", !canJudge);
   if(!canJudge) hide("failRow");
 
   if(typeof renderAnalyser === "function") renderAnalyser();
@@ -6375,7 +6379,7 @@ document.addEventListener("keydown", function(e){
     var editable = tg && (tg.tagName === "TEXTAREA" || tg.tagName === "SELECT"
       || (tg.tagName === "INPUT" && !tg.readOnly && tg.id !== "scan" && tg.id !== "opInput"));
     if(editable || e.ctrlKey || e.altKey || e.metaKey || e.key === "Tab") return;
-    if(e.key === "Enter" || e.key.length === 1){
+    if(e.key === "Enter" || e.key === "Escape" || e.key.length === 1){
       e.preventDefault();
       try{ window.parent.__dualKey(e.key, Date.now(), EMBED); }catch(x){}
     }

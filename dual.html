@@ -42,14 +42,17 @@
   <span>Two stations on this computer</span>
   <span class="tag l" id="tagL"></span>
   <span class="tag r" id="tagR"></span>
-  <span id="msg">Ready for both scanners</span>
+  <span id="msg">Ready — scans go to the right half automatically</span>
   <button onclick="toggleSetup()">Scanner setup</button>
   <button onclick="cards()">Command cards</button>
   <button onclick="exitDual()">Back to one station</button>
 </div>
 <div id="setup">
-  <div>Each scanner must send a <b>prefix</b> in front of every code, so this screen knows which half the scan belongs to.
-    Set it once with the &ldquo;Add prefix&rdquo; barcode in the scanner&rsquo;s manual.</div>
+  <div><b>No scanner setup is needed.</b> Each scan goes to the right half by itself: a board not yet booked in goes to
+    MI Line, a booked-in board to PCBA; an enclosure in the chamber to unload, otherwise to load; a driver that passed
+    final test to Packing, otherwise to Final. Pass / Fail (Enter / Space, or the cards) always go to the half that tests.
+    Badges go to the half waiting for one; if both are waiting, the operator clicks their own half first.</div>
+  <div style="margin-top:6px" class="muted">Optional: if the scanners are set to send a prefix, enter it here and the prefix decides instead.</div>
   <div style="margin-top:8px">
     Left scanner prefix <input id="pL" maxlength="4" onchange="saveCfg()">
     Right scanner prefix <input id="pR" maxlength="4" onchange="saveCfg()">
@@ -85,8 +88,8 @@ function saveCfg(){
 }
 function paintTags(){
   var n = PAIRS[cfg.pair];
-  document.getElementById("tagL").textContent = "Left · " + n[0] + " · prefix " + cfg.pL;
-  document.getElementById("tagR").textContent = "Right · " + n[1] + " · prefix " + cfg.pR;
+  document.getElementById("tagL").textContent = "Left · " + n[0];
+  document.getElementById("tagR").textContent = "Right · " + n[1];
 }
 document.getElementById("pL").value = cfg.pL;
 document.getElementById("pR").value = cfg.pR;
@@ -110,7 +113,7 @@ function cards(){
 var msgT = null;
 function say(tone, text){
   var m = document.getElementById("msg"); m.className = tone || ""; m.textContent = text;
-  clearTimeout(msgT); msgT = setTimeout(function(){ m.className = ""; m.textContent = "Ready for both scanners"; }, 6000);
+  clearTimeout(msgT); msgT = setTimeout(function(){ m.className = ""; m.textContent = "Ready — scans go to the right half automatically"; }, 6000);
 }
 function flash(side){
   var h = document.getElementById("half" + side); h.classList.add(side === "L" ? "flash-l" : "flash-r");
@@ -125,6 +128,10 @@ function badBeep(){
    prefix tells them apart. A code typed slower than a scanner is refused. */
 var MAX_GAP = 90, buf = "", t0 = 0, last = 0, gapMax = 0, src = null;
 function key(k, t, from){
+  var quiet = !buf && (!last || t - last > 400);
+  if(quiet && (k === "Enter" || k === " " || k === "Escape" || /^[1-9]$/.test(k))){
+    if(judgeKey(k)) return;
+  }
   if(k === "Enter"){
     var code = buf, dur = t0 ? t - t0 : 0, fast = gapMax <= MAX_GAP && dur <= Math.max(500, code.length * MAX_GAP);
     var origin = src;
@@ -133,7 +140,7 @@ function key(k, t, from){
     if(!fast){ badBeep(); return say("bad", "Manual typing blocked — use the scanner."); }
     route(code, origin); return;
   }
-  if(k.length !== 1) return;
+  if(k.length !== 1) return;   // (Escape etc. only matter as verdict keys above)
   if(last && t - last > MAX_GAP){ buf = ""; t0 = 0; gapMax = 0; src = null; }
   if(!t0){ t0 = t; src = from || null; }
   if(last) gapMax = Math.max(gapMax, t - last);
@@ -144,7 +151,52 @@ function waitingForBadge(side){
   var w = win(side);
   try{ return !!(w && w.signinOpen && w.signinOpen() && !(w.terminalOpen && w.terminalOpen())); }catch(e){ return false; }
 }
+/* Without scanner prefixes the half is chosen from the driver's own record,
+   because each pair is two stations in a row of the same line:
+     MI + PCBA        board not yet booked in -> MI, otherwise -> PCBA
+     Ageing in + out  enclosure in the chamber -> unload, otherwise -> load
+     Final + Packing  final test passed -> Packing, otherwise -> Final
+   Verdict cards go to the half that gives verdicts (PCBA / unload / Final).
+   The left half's records are used: it is always the earlier station, so it
+   holds the newest state of any driver it has just handled. */
+function autoSide(code){
+  var w = win("L"); if(!w || !w.classify || !w.db) return null;
+  var k = cfg.pair, c = w.classify(code), up = String(code).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if(up.indexOf("CMD") === 0) return judgeSide();
+  if(k === "MI,PCBA"){
+    if(c.kind !== "board") return "L";                   // MI refuses it with the right message
+    var u = w.db.units[c.serial];
+    return (u && u.miLine) ? "R" : "L";
+  }
+  if(k === "AGEING_IN,AGEING_OUT"){
+    var b = w.db.encIndex && w.db.encIndex[c.serial], v = b && w.db.units[b];
+    return (v && v.ageingIn && !v.ageingOut) ? "R" : "L";
+  }
+  if(k === "FINAL,PACKING"){
+    var b2 = c.kind === "enclosure" ? (w.db.encIndex && w.db.encIndex[c.serial]) : c.serial;
+    var x = b2 && w.db.units[b2];
+    return (x && x.stage4 && x.stage4.verdict === "PASS") ? "R" : "L";
+  }
+  return null;
+}
+/* The half that records Pass / Fail in this pair */
+function judgeSide(){ return {"MI,PCBA":"R", "AGEING_IN,AGEING_OUT":"R", "FINAL,PACKING":"L"}[cfg.pair] || null; }
 function isBadge(code){ return /^OP/i.test(String(code).replace(/[^A-Za-z0-9]/g, "")); }
+function judgeKey(k){
+  var side = judgeSide(), w = win(side);
+  try{
+    if(!w || !w.terminalOpen() || !w.pending || !w.stationJudges()) return false;
+    var failOpen = w.failRowOpen();
+    if(k === "Enter" && !failOpen){ w.passButton(); flash(side); return true; }
+    if(k === " " && !failOpen){ w.failButton(); flash(side); return true; }
+    if(k === "Escape" && failOpen){ w.hideFailCodes(); w.show("verdictRow"); return true; }
+    if(/^[1-9]$/.test(k) && failOpen){
+      var codes = w.currentFailCodes(), i = parseInt(k, 10) - 1;
+      if(i < codes.length){ w.recordVerdict("FAIL", codes[i]); flash(side); return true; }
+    }
+  }catch(e){}
+  return false;
+}
 function route(raw, origin){
   var code = raw.trim(), up = code.toUpperCase(), side = null, how = "";
   var pL = cfg.pL.toUpperCase(), pR = cfg.pR.toUpperCase();
@@ -164,8 +216,9 @@ function route(raw, origin){
     if(side) how = " (no scanner prefix — sent to the half waiting for a badge)";
     else if(wl && wr){ badBeep(); return say("bad", "Both halves are waiting for a badge. Click your own half, then scan your badge again."); }
   }
+  else if(!isBadge(code) && (side = autoSide(code))){ how = ""; }
   else if(cfg.noPre){ side = cfg.noPre; }
-  if(!side){ badBeep(); return say("bad", "Received \"" + raw + "\" with no scanner prefix. Set the scanners to send " + pL + " / " + pR + " first (Scanner setup)."); }
+  if(!side){ badBeep(); return say("bad", "Could not tell which half \"" + raw + "\" is for. Scan it again, or click the half it belongs to first."); }
   var w = document.getElementById("f" + side).contentWindow, ok = false;
   try{ ok = w.externalScan(code); }catch(e){}
   flash(side);
@@ -178,7 +231,7 @@ document.addEventListener("keydown", function(e){
   var tg = e.target;
   if(tg && (tg.tagName === "INPUT" || tg.tagName === "SELECT" || tg.tagName === "TEXTAREA")) return;
   if(e.ctrlKey || e.altKey || e.metaKey || e.key === "Tab") return;
-  if(e.key === "Enter" || e.key.length === 1){ e.preventDefault(); key(e.key, Date.now()); }
+  if(e.key === "Enter" || e.key === "Escape" || e.key.length === 1){ e.preventDefault(); key(e.key, Date.now()); }
 });
 </script>
 </body>
