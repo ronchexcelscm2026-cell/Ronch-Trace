@@ -508,6 +508,9 @@
     <div id="siStation" style="color:var(--info);font-size:15px;margin-bottom:10px"></div>
     <h2>Scan your operator badge</h2>
     <p style="margin-bottom:24px">Scanner input only — badges cannot be typed in.</p>
+    <p id="siDualHint" class="muted" style="display:none;margin:-12px 0 20px;font-size:13px">
+      Two stations on this PC: scan with <b>this side's</b> scanner. If the badge is not taken,
+      click anywhere on this side first, then scan again.</p>
     <input id="opInput" placeholder="Waiting for badge scan…" style="text-align:center"
            autocomplete="off" readonly>
     <div id="opErr" style="margin-top:18px;color:var(--bad)"></div>
@@ -1446,7 +1449,7 @@ function hhmm(iso){ return iso ? new Date(iso).toLocaleTimeString([], {hour:"2-d
 /* Stamped at build time. The station PCs keep this page open all day, so the
    app asks the server now and then whether a newer build has been published
    rather than relying on anyone remembering to reload after a deploy. */
-var BUILD_ID = "2026-10-31-1700";
+var BUILD_ID = "2026-11-01-1000";
 var UPDATE_SEEN = false, UPDATE_CHECKED = 0;
 
 function checkForUpdate(){
@@ -6141,7 +6144,7 @@ function pickStation(s){
   el("siStation").textContent = s.name;
   el("opErr").textContent = "";
   el("opInput").value = "";
-  setTimeout(function(){ el("opInput").focus(); }, 50);
+  if(!EMBED) setTimeout(function(){ el("opInput").focus(); }, 50);
 }
 function changeStation(){
   station = null; operator = null; pending = null; halfPair = null;
@@ -6153,7 +6156,7 @@ function endShift(){
   operator = null; pending = null; halfPair = null;
   hide("term"); show("signin");
   el("opErr").textContent = "";
-  setTimeout(function(){ el("opInput").focus(); }, 50);
+  if(!EMBED) setTimeout(function(){ el("opInput").focus(); }, 50);
 }
 function startTerminal(){
   hide("signin"); show("term");
@@ -6347,6 +6350,7 @@ el("opInput").addEventListener("drop", function(e){ e.preventDefault(); });
 function signinOpen(){
   return !el("signin").classList.contains("hide");
 }
+if(EMBED && el("siDualHint")) el("siDualHint").style.display = "block";
 function acceptBadge(code){
   var c = classify(code);
   if(c.kind !== "operator"){
@@ -6373,7 +6377,7 @@ document.addEventListener("keydown", function(e){
     if(editable || e.ctrlKey || e.altKey || e.metaKey || e.key === "Tab") return;
     if(e.key === "Enter" || e.key.length === 1){
       e.preventDefault();
-      try{ window.parent.__dualKey(e.key, Date.now()); }catch(x){}
+      try{ window.parent.__dualKey(e.key, Date.now(), EMBED); }catch(x){}
     }
     return;
   }

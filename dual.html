@@ -123,34 +123,55 @@ function badBeep(){
 
 /* Scanner keystrokes. Both scanners type into the same keyboard stream; the
    prefix tells them apart. A code typed slower than a scanner is refused. */
-var MAX_GAP = 90, buf = "", t0 = 0, last = 0, gapMax = 0;
-function key(k, t){
+var MAX_GAP = 90, buf = "", t0 = 0, last = 0, gapMax = 0, src = null;
+function key(k, t, from){
   if(k === "Enter"){
     var code = buf, dur = t0 ? t - t0 : 0, fast = gapMax <= MAX_GAP && dur <= Math.max(500, code.length * MAX_GAP);
-    buf = ""; t0 = 0; last = 0; gapMax = 0;
+    var origin = src;
+    buf = ""; t0 = 0; last = 0; gapMax = 0; src = null;
     if(!code) return;
     if(!fast){ badBeep(); return say("bad", "Manual typing blocked — use the scanner."); }
-    route(code); return;
+    route(code, origin); return;
   }
   if(k.length !== 1) return;
-  if(last && t - last > MAX_GAP){ buf = ""; t0 = 0; gapMax = 0; }
-  if(!t0) t0 = t;
+  if(last && t - last > MAX_GAP){ buf = ""; t0 = 0; gapMax = 0; src = null; }
+  if(!t0){ t0 = t; src = from || null; }
   if(last) gapMax = Math.max(gapMax, t - last);
   last = t; buf += k;
 }
-function route(raw){
-  var code = raw.trim(), up = code.toUpperCase(), side = null;
+function win(side){ try{ return document.getElementById("f" + side).contentWindow; }catch(e){ return null; } }
+function waitingForBadge(side){
+  var w = win(side);
+  try{ return !!(w && w.signinOpen && w.signinOpen() && !(w.terminalOpen && w.terminalOpen())); }catch(e){ return false; }
+}
+function isBadge(code){ return /^OP/i.test(String(code).replace(/[^A-Za-z0-9]/g, "")); }
+function route(raw, origin){
+  var code = raw.trim(), up = code.toUpperCase(), side = null, how = "";
   var pL = cfg.pL.toUpperCase(), pR = cfg.pR.toUpperCase();
-  if(pL && up.indexOf(pL) === 0 && !(pR.length > pL.length && up.indexOf(pR) === 0)){ side = "L"; code = code.slice(pL.length); }
-  else if(pR && up.indexOf(pR) === 0){ side = "R"; code = code.slice(pR.length); }
+  /* A badge starts with OP. Only treat the first letter as a scanner prefix
+     when what follows is still a real code, so "OP-12" is never read as
+     prefix "O" + "P-12". */
+  var looksPrefixed = function(p){ return p && up.indexOf(p) === 0 && /^(OP|B|E|CMD)/.test(up.slice(p.length).replace(/[^A-Z0-9]/g, "")); };
+  if(looksPrefixed(pL) && !(pR.length > pL.length && looksPrefixed(pR))){ side = "L"; code = code.slice(pL.length); }
+  else if(looksPrefixed(pR)){ side = "R"; code = code.slice(pR.length); }
+  else if(isBadge(code)){
+    /* Badges without a prefix: the half waiting for a badge takes it; if both
+       are waiting, the half the operator clicked last. */
+    var wl = waitingForBadge("L"), wr = waitingForBadge("R");
+    if(wl && !wr) side = "L"; else if(wr && !wl) side = "R";
+    else if(wl && wr && origin) side = origin;
+    else if(wl && wr && cfg.noPre) side = cfg.noPre;
+    if(side) how = " (no scanner prefix — sent to the half waiting for a badge)";
+    else if(wl && wr){ badBeep(); return say("bad", "Both halves are waiting for a badge. Click your own half, then scan your badge again."); }
+  }
   else if(cfg.noPre){ side = cfg.noPre; }
-  if(!side){ badBeep(); return say("bad", "Scan without a scanner prefix (" + raw + "). Set up the scanners: " + pL + " / " + pR + "."); }
+  if(!side){ badBeep(); return say("bad", "Received \"" + raw + "\" with no scanner prefix. Set the scanners to send " + pL + " / " + pR + " first (Scanner setup)."); }
   var w = document.getElementById("f" + side).contentWindow, ok = false;
   try{ ok = w.externalScan(code); }catch(e){}
   flash(side);
   var name = PAIRS[cfg.pair][side === "L" ? 0 : 1];
   if(!ok){ badBeep(); return say("bad", name + " is not ready for scans (sign in or choose the station first)."); }
-  say("ok", (side === "L" ? "Left" : "Right") + " · " + name + " ← " + code);
+  say("ok", (side === "L" ? "Left" : "Right") + " · " + name + " ← " + code + how);
 }
 window.__dualKey = key;
 document.addEventListener("keydown", function(e){
