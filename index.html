@@ -367,6 +367,7 @@
         <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
           <label style="color:var(--dim);font-size:13px">Paper<br>
             <select id="qrPage" class="small" style="width:180px" onchange="qrSizeChanged()">
+              <option value="ronch">Ronch roll · rows of 6 labels (15 x 15 mm)</option>
               <option value="210x297">A4 portrait (210 x 297)</option>
               <option value="297x210">A4 landscape (297 x 210)</option>
               <option value="148x210">A5 portrait (148 x 210)</option>
@@ -391,6 +392,14 @@
           <label style="color:var(--dim);font-size:13px">Page margin (mm)<br>
             <input id="qrMargin" class="small" type="number" min="0" max="30" step="1" value="8"
                    style="width:100px" onchange="qrSizeChanged()"></label>
+          <label style="color:var(--dim);font-size:13px">Gap between labels (mm)<br>
+            <input id="qrGap" class="small" type="number" min="0" max="20" step="0.5" value="2"
+                   style="width:100px" onchange="qrSizeChanged()"></label>
+          <label style="color:var(--dim);font-size:13px">Label printer<br>
+            <select id="qrDpi" class="small" style="width:130px" onchange="qrSizeChanged()">
+              <option value="203">203 dpi</option>
+              <option value="300">300 dpi</option>
+            </select></label>
           <label style="color:var(--dim);font-size:13px">QR codes per page<br>
             <input id="qrPerPage" class="small" type="number" min="0" max="999" step="1"
                    placeholder="auto" title="Leave blank or 0 to fill the page"
@@ -404,12 +413,29 @@
             <input id="qrPageH" class="small" type="number" min="20" max="900" step="1" value="150"
                    style="width:100px" onchange="qrSizeChanged()"></label>
         </div>
+        <div id="qrRollRow" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
+          <label style="color:var(--dim);font-size:13px">Shift right (mm)<br>
+            <input id="qrOffX" class="small" type="number" min="-5" max="5" step="0.5" value="0"
+                   style="width:100px" onchange="qrSizeChanged()"></label>
+          <label style="color:var(--dim);font-size:13px">Shift down (mm)<br>
+            <input id="qrOffY" class="small" type="number" min="-5" max="5" step="0.5" value="0"
+                   style="width:100px" onchange="qrSizeChanged()"></label>
+          <span class="muted" style="font-size:12px;max-width:520px;line-height:1.5">
+            Print one row first. If the QRs sit off-centre on the labels, nudge them here
+            (minus moves left / up). Saved for every station.</span>
+        </div>
+        <div id="qrRollHelp" class="muted" style="margin-top:10px;font-size:12px;line-height:1.6;max-width:820px">
+          <b>Roll printer setup (once per PC):</b> in the printer's Windows settings create the paper size
+          <b>104 x 15 mm</b> (one row of 6 labels; 2 mm gap between rows), media <b>labels with gaps</b>, and run the printer's label calibration.
+          In Chrome's print window choose that paper size, <b>Margins: None</b>, <b>Scale: Default / 100%</b>,
+          and untick <b>Headers and footers</b>. Each row of 6 labels prints as one label on the roll.
+        </div>
         <div id="qrFit" style="margin-top:12px;font-size:14px"></div>
       </div>
 
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
         <button class="ghost" style="color:var(--ok);border-color:var(--ok)" onclick="qrPrintSheet()">Print labels</button>
-        <button class="ghost" onclick="qrPrintSheet(true)">Print first page only</button>
+        <button class="ghost" onclick="qrPrintSheet(true)" id="qrTestBtn">Print first page only</button>
         <button class="ghost" style="color:var(--info);border-color:var(--info)" onclick="qrDownload('zpl')">Download ZPL for label printer</button>
         <button class="ghost" onclick="qrDownload('csv')">Download CSV</button>
       </div>
@@ -1420,7 +1446,7 @@ function hhmm(iso){ return iso ? new Date(iso).toLocaleTimeString([], {hour:"2-d
 /* Stamped at build time. The station PCs keep this page open all day, so the
    app asks the server now and then whether a newer build has been published
    rather than relying on anyone remembering to reload after a deploy. */
-var BUILD_ID = "2026-10-22-1200";
+var BUILD_ID = "2026-10-31-1700";
 var UPDATE_SEEN = false, UPDATE_CHECKED = 0;
 
 function checkForUpdate(){
@@ -3672,19 +3698,34 @@ function batchCodes(batch, which){
 }
 
 /* ---- printable label sheet: size driven entirely by the operator's input ---- */
+/* Ronch label roll: 104 mm wide, rows of 6 stickers of 15 x 15 mm, 2 mm between
+   stickers and between rows, 2 mm side margins (2+6x15+5x2+2 = 104). The roll
+   printer sees one row as one label: 104 x 15 mm, with the 2 mm row gap as the
+   label gap. One printed "page" = one row of 6, filled left to right. */
+var RONCH_ROLL = {pw:104, ph:15, w:15, h:15, margin:2, top:0, gap:2, cols:6, rows:1};
 function qrLayout(){
   var c = (db.settings.qrPrint = Object.assign(
-    {page:"custom", layout:"stack", qr:10, w:15, h:15, margin:0, pw:15, ph:15},
+    {page:"ronch", layout:"stack", qr:10, w:15, h:15, margin:2, gap:2, pw:104, ph:36, dpi:203},
     db.settings.qrPrint || {}));
+  if(!c.ronchRoll){ c.ronchRoll = 1; c.page = "ronch"; c.layout = "stack"; c.qr = 10; }
+  if(c.gap === undefined) c.gap = 0;
+  if(!c.dpi) c.dpi = 203;
+  if(c.page === "ronch"){
+    var R = RONCH_ROLL;
+    c.w = R.w; c.h = R.h; c.margin = R.margin; c.gap = R.gap; c.layout = "stack";
+    if(c.qr > 12) c.qr = 10;
+    return {cfg:c, pw:R.pw, ph:R.ph, margin:R.margin, top:R.top, gap:R.gap, roll:false, ronch:true, fit:R.cols * R.rows,
+            cols:R.cols, rows:R.rows, perPage:R.cols * R.rows, overflow:false};
+  }
   var pw, ph, roll = false;
   if(c.page === "roll"){ roll = true; pw = c.w; ph = c.h; }
   else if(c.page === "custom"){ pw = c.pw; ph = c.ph; }
   else { var a = String(c.page).split("x"); pw = +a[0]; ph = +a[1]; }
 
-  var m = roll ? 0 : c.margin;
+  var m = roll ? 0 : c.margin, g = roll ? 0 : (+c.gap || 0);
   var usableW = Math.max(0, pw - m * 2), usableH = Math.max(0, ph - m * 2);
-  var cols = roll ? 1 : Math.max(0, Math.floor(usableW / c.w));
-  var rows = roll ? 1 : Math.max(0, Math.floor(usableH / c.h));
+  var cols = roll ? 1 : Math.max(0, Math.floor((usableW + g) / (c.w + g)));
+  var rows = roll ? 1 : Math.max(0, Math.floor((usableH + g) / (c.h + g)));
   var fit = Math.max(0, cols * rows);
   var perPage = fit, want = Math.max(0, Math.floor(+c.perPage || 0));
   /* Pre-cut sheets do not always hold as many labels as the paper could, so a
@@ -3695,7 +3736,7 @@ function qrLayout(){
     if(!cols) cols = 1;
     rows = Math.ceil(want / cols);
   }
-  return {cfg:c, pw:pw, ph:ph, margin:m, roll:roll, fit:fit,
+  return {cfg:c, pw:pw, ph:ph, margin:m, gap:g, roll:roll, ronch:false, fit:fit,
           cols:cols, rows:rows, perPage:perPage, overflow:(!roll && want > fit && fit > 0)};
 }
 
@@ -3757,7 +3798,7 @@ function codeBlockSvg(code, widthMM){
 
 function qrSizeChanged(){
   var c = (db.settings.qrPrint = Object.assign(
-    {page:"custom", layout:"stack", qr:10, w:15, h:15, margin:0, pw:15, ph:15},
+    {page:"ronch", layout:"stack", qr:10, w:15, h:15, margin:2, gap:2, pw:104, ph:36, dpi:203},
     db.settings.qrPrint || {}));
   c.page   = el("qrPage").value;
   c.layout = el("qrLayout").value;
@@ -3768,6 +3809,10 @@ function qrSizeChanged(){
   c.pw     = Math.max(20, Math.min(900, parseFloat(el("qrPageW").value)  || 100));
   c.ph     = Math.max(20, Math.min(900, parseFloat(el("qrPageH").value)  || 150));
   c.perPage = Math.max(0, Math.min(999, parseInt(el("qrPerPage").value, 10) || 0));
+  c.gap    = Math.max(0,  Math.min(20,  parseFloat(el("qrGap").value) || 0));
+  c.dpi    = el("qrDpi").value === "300" ? 300 : 203;
+  c.offX   = Math.max(-5, Math.min(5, parseFloat(el("qrOffX").value) || 0));
+  c.offY   = Math.max(-5, Math.min(5, parseFloat(el("qrOffY").value) || 0));
   save();
   renderQrSizes();
 }
@@ -3785,9 +3830,19 @@ function renderQrSizes(){
   if(document.activeElement !== el("qrPageH"))  el("qrPageH").value  = c.ph;
   if(document.activeElement !== el("qrPerPage"))
     el("qrPerPage").value = c.perPage ? c.perPage : "";
+  if(document.activeElement !== el("qrGap")) el("qrGap").value = c.gap || 0;
+  if(document.activeElement !== el("qrDpi")) el("qrDpi").value = String(c.dpi || 203);
+  if(document.activeElement !== el("qrOffX")) el("qrOffX").value = c.offX || 0;
+  if(document.activeElement !== el("qrOffY")) el("qrOffY").value = c.offY || 0;
+  el("qrRollRow").style.display = L.ronch ? "flex" : "none";
+  el("qrRollHelp").style.display = L.ronch ? "block" : "none";
+  el("qrTestBtn").textContent = L.ronch ? "Print one row (test)" : "Print first page only";
   el("qrPageCustom").classList.toggle("hide", c.page !== "custom");
-  el("qrMargin").disabled = L.roll;
-  el("qrPerPage").disabled = L.roll;
+  el("qrMargin").disabled = L.roll || L.ronch;
+  el("qrPerPage").disabled = L.roll || L.ronch;
+  el("qrGap").disabled = L.roll || L.ronch;
+  el("qrLblW").disabled = L.ronch; el("qrLblH").disabled = L.ronch;
+  el("qrLayout").disabled = L.ronch;
 
   var box = el("qrFit"), msgs = [], bad = false;
   var stack = (c.layout || "stack") === "stack";
@@ -3805,18 +3860,25 @@ function renderQrSizes(){
   if(!L.perPage){ msgs.push("The label does not fit the paper at this size."); bad = true; }
   if(L.overflow) msgs.push(L.perPage + " per page is more than the " + L.fit
     + " that fit on this paper at this label size — the extra labels will run off the page.");
+  if(L.ronch && c.qr > 12){ msgs.push("On a 15 mm sticker the QR can be at most 12 mm, or the code under it will not fit."); bad = true; }
   if(c.qr < 10) msgs.push("Below about 10 mm a QR needs a high-resolution printer and a good scanner. Test one before a long run.");
 
   var n = LAST_BATCH ? batchCodes(LAST_BATCH.batch, LAST_BATCH.which).length : 0;
   var pages = L.perPage ? Math.ceil(n / L.perPage) : 0;
   box.innerHTML =
     '<div style="font-family:var(--mono);font-size:14px;color:' + (bad ? "var(--bad)" : "var(--ok)") + '">'
-    + (L.roll
+    + (L.ronch
+        ? ("Ronch roll · 104 mm wide · rows of 6 labels, 15 x 15 mm, 2 mm gaps · QR " + c.qr + " mm"
+           + ((c.offX || c.offY) ? " · shifted " + (c.offX || 0) + " / " + (c.offY || 0) + " mm" : ""))
+        : L.roll
         ? ("Label roll · one label per page · " + c.w + " x " + c.h + " mm")
         : (L.cols + " across x " + L.rows + " down = " + L.perPage + " per page"
            + (c.perPage ? " (set by hand; the paper fits " + L.fit + ")" : "")
            + "  ·  paper " + L.pw + " x " + L.ph + " mm"))
-    + (n ? ("  ·  " + n + " labels = " + pages + " page" + (pages === 1 ? "" : "s")) : "")
+    + (n ? (L.ronch
+        ? ("  ·  " + n + " codes = " + pages + " row" + (pages === 1 ? "" : "s") + " on the roll"
+           + (n % L.perPage ? " (last row " + (n % L.perPage) + " of 6)" : ""))
+        : ("  ·  " + n + " labels = " + pages + " page" + (pages === 1 ? "" : "s"))) : "")
     + (stack ? ("  ·  code text " + codeTextMM(c).toFixed(2) + " mm on 2 lines") : "")
     + '</div>'
     + (msgs.length ? '<div style="margin-top:7px;font-size:13px;color:' + (bad ? "var(--bad)" : "var(--wait)") + '">'
@@ -3841,9 +3903,14 @@ function qrPrintSheet(firstPageOnly){
 
   el("sheetStyle").textContent =
     "@media print{"
-    + "@page{size:" + L.pw + "mm " + L.ph + "mm;margin:" + L.margin + "mm}"
+    + (L.ronch
+        ? ("@page{size:" + L.pw + "mm " + L.ph + "mm;margin:0}"
+           + "html,body{margin:0!important;padding:0!important;background:#fff!important}"
+           + "#printSheet .pg{width:" + L.pw + "mm;height:" + L.ph + "mm;box-sizing:border-box;overflow:hidden;"
+           +   "padding:" + Math.max(0, (L.top || 0) + (+c.offY || 0)) + "mm 0 0 " + Math.max(0, L.margin + (+c.offX || 0)) + "mm}")
+        : ("@page{size:" + L.pw + "mm " + L.ph + "mm;margin:" + L.margin + "mm}"))
     + "#printSheet .grid{display:grid;grid-template-columns:repeat(" + L.cols + "," + c.w + "mm);"
-    +   "grid-auto-rows:" + c.h + "mm}"
+    +   "grid-auto-rows:" + c.h + "mm;gap:" + (L.gap || 0) + "mm}"
     + "#printSheet .lbl{width:" + c.w + "mm;height:" + c.h + "mm;padding:"
     +   (stack ? "0.8mm" : "1.2mm") + "}"
     + "#printSheet .lbl > svg{width:" + qrPx + "mm;height:" + qrPx + "mm}"
@@ -3862,7 +3929,7 @@ function qrPrintSheet(firstPageOnly){
         // Just the QR and its code underneath, nothing else — the code wraps
         // to a second line and is sized to match the width of the QR.
         return '<div class="lbl stack">' + svg
-          + '<div class="tx">' + codeBlockSvg(x.code, qrPx) + '</div></div>';
+          + '<div class="tx">' + codeBlockSvg(x.code, Math.min(qrPx, tmm * codeLongest() * 0.6)) + '</div></div>';
       }
       return '<div class="lbl">' + svg
         + '<div class="tx">'
@@ -3896,7 +3963,8 @@ function zplFor(list, part){
   var ascii = function(t){
     return String(t).replace(/\u00B7/g, "-").replace(/[^\x20-\x7E]/g, "").replace(/[\^~]/g, "-");
   };
-  var L = qrLayout(), c = L.cfg, DPMM = 8;          // 203 dpi roll printers
+  var L = qrLayout(), c = L.cfg, DPMM = (c.dpi === 300 ? 12 : 8);   // dots per mm
+  if(L.ronch) return zplRonchRoll(list, c, DPMM, ascii);
   var pw = Math.round(c.w * DPMM), ll = Math.round(c.h * DPMM);
   var qrDots = Math.round(c.qr * DPMM);
   var human = ascii(prettyPart(part)), desc = ascii(variantShort(part));
@@ -3937,6 +4005,39 @@ function zplFor(list, part){
       + "^FO16," + Math.max(24, ll - 26) + "^A0N,18,18^FD" + ascii(x.code) + "^FS\n"
       + "^XZ\n";
   }).join("");
+}
+
+/* ZPL for the Ronch roll: each printer label is one row of 6 (104 x 15 mm),
+   filled left to right. */
+function zplRonchRoll(list, c, DPMM, ascii){
+  var R = RONCH_ROLL, d = function(mm){ return Math.round(mm * DPMM); };
+  var modules = 27;                                   // 25-module QR + 1 quiet module each side
+  var mag = Math.max(1, Math.min(10, Math.round(d(c.qr) / modules)));
+  while(mag > 1 && mag * modules > d(RONCH_ROLL.w) - 4) mag--;
+  var qrW = mag * modules, out = "";
+  for(var i = 0; i < list.length; i += R.cols * R.rows){
+    var page = list.slice(i, i + R.cols * R.rows);
+    out += "^XA\n^MNY\n^PW" + d(R.pw) + "\n^LL" + d(R.ph) + "\n^LH0,0\n^CI28\n";
+    page.forEach(function(x, k){
+      var col = k % R.cols, row = Math.floor(k / R.cols);
+      var sx = Math.max(0, d(R.margin + (+c.offX || 0) + col * (R.w + R.gap)));
+      var sy = Math.max(0, d((R.top || 0) + (+c.offY || 0) + row * (R.h + R.gap)));
+      var sw = d(R.w), sh = d(R.h);
+      var qx = sx + Math.max(0, Math.round((sw - qrW) / 2)), qy = sy + d(0.5);
+      var two = splitCode(ascii(x.code));
+      var longest = Math.max(two[0].length, two[1].length);
+      var fw = Math.max(3, Math.floor(qrW / longest));
+      var room = sy + sh - (qy + qrW) - 2;            // dots left under the QR for two lines
+      var fh = Math.max(5, Math.min(Math.floor(fw * 1.4), Math.floor(room / 2)));
+      var cx = function(t){ return sx + Math.max(0, Math.round((sw - t.length * fw) / 2)); };
+      var ty = qy + qrW + 1;
+      out += "^FO" + qx + "," + qy + "^BQN,2," + mag + "^FDLA," + x.code + "^FS\n"
+        + "^FO" + cx(two[0]) + "," + ty + "^A0N," + fh + "," + fw + "^FD" + two[0] + "^FS\n"
+        + "^FO" + cx(two[1]) + "," + (ty + fh) + "^A0N," + fh + "," + fw + "^FD" + two[1] + "^FS\n";
+    });
+    out += "^XZ\n";
+  }
+  return out;
 }
 
 function qrVariant(){
